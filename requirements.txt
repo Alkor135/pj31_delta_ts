@@ -1,0 +1,5 @@
+# Библиотеки графика finam_delta_bar_chart/chart.py.
+finplot==1.9.7
+pandas==3.1.1
+pyqtgraph==0.14.0
+PyQt6==6.12.1

@@ -1,3 +1,6 @@
+# Личные результаты ручных бэктестов
+/finam_delta_bar_chart/backtests/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
