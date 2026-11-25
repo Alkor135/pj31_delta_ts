@@ -8,6 +8,7 @@ r"""Строит график адаптивных дельта-баров из 
 Каждая рассчитанная сессия сохраняется в delta_bar_finam_RTS/chart.sqlite3 или
 delta_bar_finam_MIX/chart.sqlite3 под корнем архивов. Повторный запуск читает
 готовые дни из базы. Консоль показывает ход загрузки. Даты указаны по Москве.
+Если архив за указанную дату отсутствует, консоль показывает полный путь к ZIP.
 В режиме --backtest раскрывает бары по одному, сохраняет в CSV позиции
 и индикаторы на входе, показывает открытый и закрытый PnL в пунктах без комиссий.
 
@@ -42,13 +43,13 @@ if __package__:
     from .src import BUY_COLOR, SELL_COLOR, WINDOW, delta_core
     from .src.day_cache import open_cache
     from .src.delta_core import NS_SECOND, build_bars, calibrate, read_day
-    from .src.finam_archives import DEFAULT_ROOT, discover
+    from .src.finam_archives import DEFAULT_ROOT, archive_folder, discover
     from .src.finplot_compat import load_finplot
 else:
     from src import BUY_COLOR, SELL_COLOR, WINDOW, delta_core
     from src.day_cache import open_cache
     from src.delta_core import NS_SECOND, build_bars, calibrate, read_day
-    from src.finam_archives import DEFAULT_ROOT, discover
+    from src.finam_archives import DEFAULT_ROOT, archive_folder, discover
     from src.finplot_compat import load_finplot
 
 # Повышать при изменении локальных формул индикаторов или состава сохраняемых полей.
@@ -148,6 +149,7 @@ def load_chart(input_root, symbol, end=None, start=None, *, progress=None):
     """Возвращает свечи инструмента symbol с индикаторами из дневного кэша или ZIP под input_root.
 
     end задаёт точную последнюю сессию, по умолчанию выбирается последняя с тиками.
+    Если архив за end отсутствует, ValueError содержит полный путь к ожидаемому ZIP.
     start включает более ранние дни в тот же график. Обе границы — даты по Москве.
     Свечи строятся для всех сессий со сделками. Историю для порога и среднего
     пополняют только завершённые сессии с понедельника по пятницу, в которых были тики.
@@ -158,7 +160,8 @@ def load_chart(input_root, symbol, end=None, start=None, *, progress=None):
         raise ValueError("Начало диапазона позже последней даты")
     archives = discover(input_root, symbol, end or date.max)
     if end and end not in archives:
-        raise ValueError(f"{symbol}: отсутствует архив за {end}")
+        expected_archive = archive_folder(input_root, symbol).absolute() / f"{end:%Y%m%d}.zip"
+        raise ValueError(f"{symbol}: отсутствует архив за {end} ({expected_archive})")
     core_hash = sha256(Path(delta_core.__file__).read_bytes()).hexdigest()
     with open_cache(input_root, symbol, archives, f"{CACHE_VERSION}/{WINDOW}/{core_hash}") as cache:
         return load_range(cache, symbol, start, end, progress)

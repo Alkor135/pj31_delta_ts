@@ -8,6 +8,7 @@
     python -m unittest discover -s tests -p test_finam_delta_chart.py -v
 """
 
+from contextlib import chdir, redirect_stderr
 from datetime import date, timedelta
 from io import StringIO
 from pathlib import Path
@@ -29,6 +30,25 @@ def write_session(folder, day, trades):
 
 class ChartTests(unittest.TestCase):
     """Проверяет выбор истории, границы свечей и оба индикатора."""
+
+    def test_missing_archive_reports_full_path(self):
+        with TemporaryDirectory() as tmp, chdir(tmp):
+            root = Path("данные Finam")
+            folder = root / "data_finam_MIX_tick_zip"
+            arguments = ["--input-root", str(root), "--symbol", "MIX",
+                         "--start", "2020-11-09", "--date", "2026-11-11"]
+            cases = ((False, "Не найдена папка исходных тиков", Path(tmp) / folder),
+                     (True, "отсутствует архив за 2026-11-11", Path(tmp) / folder / "20261111.zip"))
+            for folder_exists, message, expected_path in cases:
+                with self.subTest(message=message):
+                    if folder_exists:
+                        folder.mkdir(parents=True)
+                    output = StringIO()
+                    with redirect_stderr(output):
+                        status = chart.main(arguments)
+                    self.assertEqual(status, 1)
+                    self.assertIn(message, output.getvalue())
+                    self.assertIn(str(expected_path), output.getvalue())
 
     def test_tick_alignment_and_rolling_sessions(self):
         """Сверяет объём на закрытиях с историей по будням и проверяет сдвиг окна после понедельника."""
