@@ -1,9 +1,9 @@
 r"""Строит график адаптивных дельта-баров из дневных тиков Finam RTS или MIX.
 
-Заимствует чтение ZIP, подбор порога и построение OHLC из соседнего проекта
-pj24_delta_bars. На свечи накладывает частоту направленных сделок. Под свечами
-сравнивает накопленный объём со средним к тому же времени. Для среднего объёма
-и порога дельты берёт одни и те же 20 предыдущих будних сессий со сделками.
+Использует локальное ядро для чтения ZIP, подбора порога и построения OHLC.
+На свечи накладывает частоту направленных сделок. Под свечами сравнивает
+накопленный объём со средним к тому же времени. Для среднего объёма и порога
+дельты берёт одни и те же 20 предыдущих будних сессий со сделками.
 Каждая рассчитанная сессия сохраняется в delta_bar_finam_RTS/chart.sqlite3 или
 delta_bar_finam_MIX/chart.sqlite3 под корнем архивов. Повторный запуск читает
 готовые дни из базы. Консоль показывает ход загрузки. Даты указаны по Москве.
@@ -36,20 +36,14 @@ import sys
 from time import monotonic
 from zipfile import BadZipFile
 
-ENGINE_ROOT = Path(__file__).resolve().parents[2] / "pj24_delta_bars"
-if not (ENGINE_ROOT / "source" / "delta_core.py").is_file():
-    raise SystemExit(f"Не найден исходный проект с алгоритмом дельта-баров: {ENGINE_ROOT}")
-sys.path.insert(0, str(ENGINE_ROOT))
-try:
-    from source.delta_core import NS_SECOND, build_bars, calibrate, read_day
-    from tick_to_delta_bars import DEFAULT_ROOT, discover
-finally:
-    # Соседний проект тоже содержит backtest. Его путь нужен только для импорта ядра.
-    sys.path.remove(str(ENGINE_ROOT))
 if __package__:
     from .day_cache import open_cache
+    from .delta_core import NS_SECOND, build_bars, calibrate, read_day
+    from .finam_archives import DEFAULT_ROOT, discover
 else:
     from day_cache import open_cache
+    from delta_core import NS_SECOND, build_bars, calibrate, read_day
+    from finam_archives import DEFAULT_ROOT, discover
 
 WINDOW = 20
 # Повышать при изменении локальных формул индикаторов или состава сохраняемых полей.
@@ -154,6 +148,7 @@ def load_chart(input_root, symbol, end=None, start=None, *, progress=None):
     start включает более ранние дни в тот же график. Обе границы — даты по Москве.
     Свечи строятся для всех сессий со сделками. Историю для порога и среднего
     пополняют только завершённые сессии с понедельника по пятницу, в которых были тики.
+    При проверке кэша учитывается контрольная сумма локального модуля расчёта.
     progress при задании получает этап, число готовых и общее число единиц, дату и операцию.
     """
     if start and end and start > end:
@@ -161,7 +156,7 @@ def load_chart(input_root, symbol, end=None, start=None, *, progress=None):
     archives = discover(input_root, symbol, end or date.max)
     if end and end not in archives:
         raise ValueError(f"{symbol}: отсутствует архив за {end}")
-    core_hash = sha256((ENGINE_ROOT / "source" / "delta_core.py").read_bytes()).hexdigest()
+    core_hash = sha256(Path(__file__).with_name("delta_core.py").read_bytes()).hexdigest()
     with open_cache(input_root, symbol, archives, f"{CACHE_VERSION}/{WINDOW}/{core_hash}") as cache:
         return load_range(cache, symbol, start, end, progress)
 

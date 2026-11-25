@@ -6,7 +6,7 @@
 
 ## Запуск
 
-Команды для PowerShell из корня `pj31_delta_ts`. Используется локальное окружение `.venv`. Перед первым запуском установите зависимости командой `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`. Исходный код алгоритма по-прежнему берётся из соседнего `pj24_delta_bars`.
+Команды для PowerShell из корня `pj31_delta_ts`. Используется локальное окружение `.venv`. Перед первым запуском установите зависимости командой `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`.
 
 ```powershell
 $python = '.\.venv\Scripts\python.exe'
@@ -106,7 +106,11 @@ CSV использует UTF-8 с BOM, разделитель — запятая
 Переустановка Finplot 1.9.7 восстановит этот блок; обычной установки пакетов
 для такой локали недостаточно.
 
-Скрипт использует исходные функции `pj24_delta_bars/source/delta_core.py` и поиск файлов из `tick_to_delta_bars.py`. Папки проектов должны лежать рядом. Для каждого инструмента нужен свой архив.
+Локальный модуль `delta_core.py` читает тики, подбирает порог и строит OHLC. Модуль `finam_archives.py` ищет дневные ZIP выбранного инструмента в каталоге `--input-root` и упорядочивает их по дате. Оба модуля используют стандартную библиотеку Python. Исходники перенесены из коммита `488b0f5` репозитория `pj24_delta_bars`. [Вычислительное ядро](https://github.com/Alkor135/pj24_delta_bars/blob/488b0f5edaf5d83b41a4e703e3db471312256cd8/source/delta_core.py), [поиск ZIP](https://github.com/Alkor135/pj24_delta_bars/blob/488b0f5edaf5d83b41a4e703e3db471312256cd8/tick_to_delta_bars.py).
+
+При построении графика SQLite-кэш сверяется с контрольной суммой локального ядра. Если сумма изменилась, график пересчитает запрошенные дни из ZIP.
+
+Каталоги архивов по умолчанию расположены в `C:\data_quote`.
 
 - RTS — `C:\data_quote\data_finam_RTS_tick_zip\YYYYMMDD.zip`.
 - MIX — `C:\data_quote\data_finam_MIX_tick_zip\YYYYMMDD.zip`.
