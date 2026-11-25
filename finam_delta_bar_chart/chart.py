@@ -1,6 +1,7 @@
 r"""Строит график адаптивных дельта-баров из дневных тиков Finam RTS или MIX.
 
-Использует локальное ядро для чтения ZIP, подбора порога и построения OHLC.
+Использует ядро из src для чтения ZIP, подбора порога и построения OHLC.
+График и экспорт PNG работают с русской локалью Windows.
 На свечи накладывает частоту направленных сделок. Под свечами сравнивает
 накопленный объём со средним к тому же времени. Для среднего объёма и порога
 дельты берёт одни и те же 20 предыдущих будних сессий со сделками.
@@ -12,6 +13,7 @@ delta_bar_finam_MIX/chart.sqlite3 под корнем архивов. Повто
 
 Примеры из корня pj31_delta_ts с локальным окружением .venv:
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py
+    .\.venv\Scripts\python.exe -m finam_delta_bar_chart.chart --help
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --symbol MIX --date 2026-11-11
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --start 2026-11-09 --date 2026-11-11
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --start 2016-11-09 --date 2026-11-11
@@ -37,19 +39,20 @@ from time import monotonic
 from zipfile import BadZipFile
 
 if __package__:
-    from .day_cache import open_cache
-    from .delta_core import NS_SECOND, build_bars, calibrate, read_day
-    from .finam_archives import DEFAULT_ROOT, discover
+    from .src import BUY_COLOR, SELL_COLOR, WINDOW, delta_core
+    from .src.day_cache import open_cache
+    from .src.delta_core import NS_SECOND, build_bars, calibrate, read_day
+    from .src.finam_archives import DEFAULT_ROOT, discover
+    from .src.finplot_compat import load_finplot
 else:
-    from day_cache import open_cache
-    from delta_core import NS_SECOND, build_bars, calibrate, read_day
-    from finam_archives import DEFAULT_ROOT, discover
+    from src import BUY_COLOR, SELL_COLOR, WINDOW, delta_core
+    from src.day_cache import open_cache
+    from src.delta_core import NS_SECOND, build_bars, calibrate, read_day
+    from src.finam_archives import DEFAULT_ROOT, discover
+    from src.finplot_compat import load_finplot
 
-WINDOW = 20
 # Повышать при изменении локальных формул индикаторов или состава сохраняемых полей.
 CACHE_VERSION = "weekday-volume-rates-v1"
-BUY_COLOR = "#188552"
-SELL_COLOR = "#cf404d"
 
 
 class ConsoleProgress:
@@ -148,7 +151,7 @@ def load_chart(input_root, symbol, end=None, start=None, *, progress=None):
     start включает более ранние дни в тот же график. Обе границы — даты по Москве.
     Свечи строятся для всех сессий со сделками. Историю для порога и среднего
     пополняют только завершённые сессии с понедельника по пятницу, в которых были тики.
-    При проверке кэша учитывается контрольная сумма локального модуля расчёта.
+    При проверке кэша учитывается контрольная сумма загруженного модуля расчёта.
     progress при задании получает этап, число готовых и общее число единиц, дату и операцию.
     """
     if start and end and start > end:
@@ -156,7 +159,7 @@ def load_chart(input_root, symbol, end=None, start=None, *, progress=None):
     archives = discover(input_root, symbol, end or date.max)
     if end and end not in archives:
         raise ValueError(f"{symbol}: отсутствует архив за {end}")
-    core_hash = sha256(Path(__file__).with_name("delta_core.py").read_bytes()).hexdigest()
+    core_hash = sha256(Path(delta_core.__file__).read_bytes()).hexdigest()
     with open_cache(input_root, symbol, archives, f"{CACHE_VERSION}/{WINDOW}/{core_hash}") as cache:
         return load_range(cache, symbol, start, end, progress)
 
@@ -246,10 +249,14 @@ def load_range(cache, symbol, start, end, progress):
 
 
 def show_chart(bars, symbol, png=None):
-    """Показывает свечи bars инструмента symbol и среднее по будням или сохраняет график по пути png."""
+    """Показывает свечи bars инструмента symbol и среднее по будням.
+
+    При заданном пути png сохраняет изображение вместо открытия окна.
+    Загружает finplot с поддержкой текущей локали Windows.
+    """
     if png:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    import finplot as fplt
+    fplt = load_finplot()
     import pandas as pd
     import pyqtgraph as pg
     from PyQt6.QtGui import QFont, QFontDatabase
@@ -354,7 +361,10 @@ def show_chart(bars, symbol, png=None):
 
 
 def main(argv=None):
-    """Разбирает argv, открывает просмотр, бэктест или экспорт PNG и возвращает код завершения."""
+    """Разбирает argv и возвращает код завершения просмотра, бэктеста или экспорта PNG.
+
+    Модули бэктеста загружаются из src только в режиме --backtest.
+    """
     parser = argparse.ArgumentParser(description="Адаптивные дельта-бары и тиковые индикаторы Finam")
     parser.add_argument("--symbol", choices=("RTS", "MIX"), default="RTS", help="инструмент (по умолчанию RTS)")
     parser.add_argument("--date", type=date.fromisoformat, help="дата сессии ГГГГ-ММ-ДД (по умолчанию последняя с тиками)")
@@ -377,11 +387,11 @@ def main(argv=None):
         print(f"Построение графика · свечей {len(bars)}", file=sys.stderr, flush=True)
         if args.backtest:
             if __package__:
-                from .backtest import Backtest
-                from .backtest_window import show_backtest
+                from .src.backtest import Backtest
+                from .src.backtest_window import show_backtest
             else:
-                from backtest import Backtest
-                from backtest_window import show_backtest
+                from src.backtest import Backtest
+                from src.backtest_window import show_backtest
             session = Backtest(bars, args.symbol, args.trades)
             print(f"Файл позиций: {session.path}", flush=True)
             show_backtest(session)

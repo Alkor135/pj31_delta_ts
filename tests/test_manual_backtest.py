@@ -17,7 +17,8 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from finam_delta_bar_chart import backtest
+from finam_delta_bar_chart import chart
+from finam_delta_bar_chart.src import backtest
 from tests.test_finam_delta_chart import write_session
 
 
@@ -220,7 +221,7 @@ class BacktestTests(unittest.TestCase):
         self.assertTrue(first.path.is_file() and second.path.is_file())
 
     def test_script_entry_reaches_local_backtest(self):
-        """Запускает chart.py отдельным процессом и проверяет выбор местного модуля после расчёта ZIP."""
+        """Проверяет загрузку бэктеста из src при прямом и модульном запуске после расчёта ZIP."""
         root = Path(self.folder)
         folder = root / "data_finam_RTS_tick_zip"
         folder.mkdir()
@@ -230,13 +231,18 @@ class BacktestTests(unittest.TestCase):
             if past.weekday() < 5:
                 write_session(folder, past, [("10:00:00", 100, 1), ("10:01:00", 104, 1)])
         self.session.open_position("BUY")
-        script = Path(backtest.__file__).with_name("chart.py")
-        result = subprocess.run([sys.executable, str(script), "--backtest", "--date", str(day),
-                                 "--input-root", str(root), "--trades", str(self.path)],
-                                cwd=root, env={**os.environ, "PYTHONUTF8": "1", "QT_QPA_PLATFORM": "offscreen"},
-                                capture_output=True, encoding="utf-8", timeout=20)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("Файл позиций уже существует", result.stderr)
+        script = Path(chart.__file__).resolve()
+        for entry, cwd in (([str(script)], root),
+                           (["-m", "finam_delta_bar_chart.chart"], script.parents[1])):
+            with self.subTest(entry=entry):
+                result = subprocess.run(
+                    [sys.executable, "-E", "-X", "utf8", *entry, "--backtest", "--date", str(day),
+                     "--input-root", str(root), "--trades", str(self.path)],
+                    cwd=cwd, env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+                    capture_output=True, encoding="utf-8", timeout=20,
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("Файл позиций уже существует", result.stderr)
         self.assertEqual(self.rows()[0]["entry_price"], "100.1")
 
     def test_last_and_hovered_bar_share_one_row(self):
@@ -245,7 +251,7 @@ class BacktestTests(unittest.TestCase):
         from PyQt6.QtCore import QEvent, QPointF, Qt
         from PyQt6.QtTest import QTest
         from PyQt6.QtWidgets import QApplication
-        from finam_delta_bar_chart.backtest_window import BacktestWindow
+        from finam_delta_bar_chart.src.backtest_window import BacktestWindow
 
         app = QApplication.instance() or QApplication([])
         bars = sample_bars()
@@ -294,7 +300,7 @@ class BacktestTests(unittest.TestCase):
         """Сверяет каждую ячейку журнала в окне с CSV при входе, общем закрытии и отмене выхода."""
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         from PyQt6.QtWidgets import QApplication
-        from finam_delta_bar_chart.backtest_window import BacktestWindow
+        from finam_delta_bar_chart.src.backtest_window import BacktestWindow
 
         app = QApplication.instance() or QApplication([])
         session = self.session
@@ -331,7 +337,7 @@ class BacktestTests(unittest.TestCase):
         from PyQt6.QtCore import Qt
         from PyQt6.QtTest import QTest
         from PyQt6.QtWidgets import QApplication
-        from finam_delta_bar_chart.backtest_window import BacktestWindow
+        from finam_delta_bar_chart.src.backtest_window import BacktestWindow
 
         app = QApplication.instance() or QApplication([])
         window = BacktestWindow(self.session)

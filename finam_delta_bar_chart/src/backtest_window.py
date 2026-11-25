@@ -21,12 +21,8 @@ from PyQt6.QtWidgets import (QAbstractItemView, QGraphicsProxyWidget, QHBoxLayou
                              QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem,
                              QVBoxLayout, QWidget)
 
-if __package__:
-    from .backtest import COLUMNS
-    from .chart import BUY_COLOR, SELL_COLOR, WINDOW
-else:
-    from backtest import COLUMNS
-    from chart import BUY_COLOR, SELL_COLOR, WINDOW
+from . import BUY_COLOR, SELL_COLOR, WINDOW
+from .backtest import COLUMNS
 
 
 class TimeAxis(pg.AxisItem):
