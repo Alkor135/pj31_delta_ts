@@ -8,7 +8,7 @@
 
 ## Запуск
 
-`chart.py` — единственный запускаемый скрипт в этой папке. Вспомогательные модули находятся в [`src`](src/README.md).
+`chart.py` открывает основной график и ручной бэктест. [`chart_2_supertrend.py`](#график-с-двумя-supertrend) открывает график с двумя линиями Supertrend. Вспомогательные модули находятся в [`src`](src/README.md).
 
 Команды для PowerShell из корня `pj31_delta_ts`. Используется локальное окружение `.venv`. Перед первым запуском установите зависимости командой `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`.
 
@@ -37,6 +37,27 @@ $python = '.\.venv\Scripts\python.exe'
 | `--trades ФАЙЛ` | Задать путь нового CSV позиций для `--backtest`. Относительный путь считается от текущей папки PowerShell. |
 
 Если архив за `--date` отсутствует, сообщение об ошибке содержит полный путь к ожидаемому ZIP. Если отсутствует папка с архивами инструмента, сообщение содержит полный путь к папке. Относительный `--input-root` отсчитывается от текущей папки PowerShell.
+
+## График с двумя Supertrend
+
+`chart_2_supertrend.py` загружает готовые дельта-бары через `chart.load_chart()` с использованием общего дневного SQLite-кэша. Поверх свечей на ценовой шкале показаны младшая тонкая и старшая толстая ступенчатые линии. Зелёный участок показывает восходящее направление, красный — нисходящее. У курсора видны оба уровня. Интенсивности покупок и продаж и нижняя панель разницы объёмов также доступны в этом окне.
+
+Оба Supertrend рассчитываются по выбранному диапазону дельта-баров с ATR Уайлдера. Периоды заданы в барах. Линия появляется после накопления своего периода ATR, а в многодневном диапазоне расчёт продолжается через границу сессии. [Формула Supertrend](https://www.tradingview.com/support/solutions/43000634738-supertrend/)
+
+Скрипт принимает `--symbol`, `--date`, `--start`, `--input-root` и `--png` с тем же назначением, что у основного графика.
+
+| Параметр | Назначение | По умолчанию |
+| --- | --- | --- |
+| `--fast-period` | Период ATR младшего Supertrend в барах. | `10` |
+| `--fast-multiplier` | Множитель ATR младшего Supertrend. | `2` |
+| `--slow-period` | Период ATR старшего Supertrend в барах. | `21` |
+| `--slow-multiplier` | Множитель ATR старшего Supertrend. | `4` |
+
+```powershell
+$python = '.\.venv\Scripts\python.exe'
+& $python .\finam_delta_bar_chart\chart_2_supertrend.py --symbol RTS --date 2026-11-11
+& $python -m finam_delta_bar_chart.chart_2_supertrend --symbol MIX --start 2026-11-09 --date 2026-11-11 --fast-period 8 --fast-multiplier 2 --slow-period 21 --slow-multiplier 4 --png MIX_supertrend.png
+```
 
 ## Ручной бэктест
 

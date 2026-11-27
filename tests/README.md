@@ -31,3 +31,9 @@
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p test_manual_backtest.py -v
 ```
+
+`test_supertrend.py` сверяет уровни Supertrend с ручным расчётом ATR и обеими сменами направления. Проверка экспорта запускает `chart_2_supertrend.py` с заданными параметрами на временных дневных ZIP и ищет четыре цвета двух ступенчатых линий на ценовой панели PNG.
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest tests.test_supertrend -v
+```
