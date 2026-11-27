@@ -27,8 +27,8 @@ delta_bar_finam_MIX/chart.sqlite3 под корнем архивов с поле
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --symbol MIX --trades mix.csv
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --start 2026-09-01 --symbol RTS
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --start 2026-09-01 --symbol MIX
-    .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --symbol RTS --start 2026-09-01 --trades rts.csv
-    .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --symbol MIX --start 2026-09-01 --trades mix.csv
+    .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --symbol RTS --start 2026-09-01 --trades .\finam_delta_bar_chart\backtests\rts.csv
+    .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --symbol MIX --start 2026-09-01 --trades .\finam_delta_bar_chart\backtests\mix.csv
 """
 
 import argparse
