@@ -1,21 +1,24 @@
-"""Проверяет график Finam на дневных ZIP с известными сделками.
+r"""Проверяет график Finam на дневных ZIP с известными сделками.
 
-Проверяет общее окно из 20 будних сессий для среднего объёма и порога дельты.
+Проверяет общее окно из 20 будних сессий для разницы объёмов и порога дельты.
 Использует выходные, пустой день, одинаковые метки и сделки после времени
 сравнения. Проверяет прогресс, повторное чтение из SQLite, продолжение после
 остановки и обновление зависимых дней. Архивы и базы создаются во временной папке.
 Запуск из корня проекта:
-    python -m unittest discover -s tests -p test_finam_delta_chart.py -v
+    .\.venv\Scripts\python.exe -m unittest discover -s tests -p test_finam_delta_chart.py -v
 """
 
-from contextlib import chdir, redirect_stderr
+from contextlib import chdir, closing, redirect_stderr
 from datetime import date, timedelta
 from io import StringIO
+import json
 from pathlib import Path
+import sqlite3
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 from zipfile import BadZipFile, ZipFile
+import zlib
 
 from finam_delta_bar_chart import chart
 
@@ -29,9 +32,10 @@ def write_session(folder, day, trades):
 
 
 class ChartTests(unittest.TestCase):
-    """Проверяет выбор истории, границы свечей и оба индикатора."""
+    """Проверяет выбор истории, границы свечей, интенсивности и разницу объёмов."""
 
     def test_missing_archive_reports_full_path(self):
+        """Проверяет абсолютные пути при отсутствии каталога и ZIP за запрошенную дату."""
         with TemporaryDirectory() as tmp, chdir(tmp):
             root = Path("данные Finam")
             folder = root / "data_finam_MIX_tick_zip"
@@ -51,7 +55,7 @@ class ChartTests(unittest.TestCase):
                     self.assertIn(str(expected_path), output.getvalue())
 
     def test_tick_alignment_and_rolling_sessions(self):
-        """Сверяет объём на закрытиях с историей по будням и проверяет сдвиг окна после понедельника."""
+        """Сверяет разницу объёмов на закрытиях и проверяет сдвиг буднего окна после понедельника."""
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             folder = root / "data_finam_RTS_tick_zip"
@@ -73,10 +77,10 @@ class ChartTests(unittest.TestCase):
             tomorrow = day + timedelta(days=1)
             write_session(folder, tomorrow, [("10:00:02", 100, 7)])
             bars = chart.load_chart(root, "RTS", tomorrow, start=day)
-            self.assertEqual([bar["daily_volume"] for bar in bars], [1003, 2003, 2004, 7])
             historical = [v + 5 for v in history_volumes[-20:]]
-            self.assertEqual([bar["mean_volume"] for bar in bars[:3]], [sum(historical) / 20] * 3)
-            self.assertEqual(bars[3]["mean_volume"], (sum(historical[1:]) + 2003) / 20)
+            self.assertEqual([bar["volume_diff"] for bar in bars[:3]],
+                             [(v * 20 - sum(historical)) / 20 for v in (1003, 2003, 2004)])
+            self.assertEqual(bars[3]["volume_diff"], (7 * 20 - sum(historical[1:]) - 2003) / 20)
             self.assertEqual(bars[0]["buy_rate"], 1 / 3)
             self.assertEqual(bars[1]["buy_rate"], 1)
             self.assertEqual(bars[2]["sell_rate"], 1)
@@ -85,7 +89,7 @@ class ChartTests(unittest.TestCase):
             self.assertEqual([bar["is_complete"] for bar in bars], [1, 1, 0, 0])
 
     def test_weekend_bars_use_weekday_history(self):
-        """Сверяет порог и среднее при переходе через две торговые выходные сессии."""
+        """Сверяет порог и разницу объёмов при переходе через две торговые выходные сессии."""
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             folder = root / "data_finam_MIX_tick_zip"
@@ -106,9 +110,11 @@ class ChartTests(unittest.TestCase):
                              {"2026-11-07", "2026-11-08", "2026-11-09"})
             self.assertEqual({bar["threshold"] for bar in bars}, {2})
             # К моменту закрытия выходных баров в каждый будний день прошёл 1 контракт.
-            self.assertEqual({bar["mean_volume"] for bar in bars[:-1]}, {1})
+            for weekend in ("2026-11-07", "2026-11-08"):
+                offsets = [bar["volume_diff"] for bar in bars if bar["end_time"].startswith(weekend)]
+                self.assertEqual(offsets, list(range(100000, 800001, 100000)))
             # В 10:07 понедельника берётся полный объём каждого из 20 будних дней.
-            self.assertEqual(bars[-1]["mean_volume"], 6)
+            self.assertEqual(bars[-1]["volume_diff"], 3994)
             self.assertEqual(chart.load_chart(root, "MIX"), [bars[-1]])
 
     def test_requires_full_history(self):
@@ -212,25 +218,38 @@ class DayCacheTests(unittest.TestCase):
         with self.assertRaises(BadZipFile):
             chart.load_chart(self.root, "RTS", self.end, self.start)
         with patch.object(chart, "read_day", side_effect=AssertionError("потерян первый день")):
-            self.assertEqual(chart.load_chart(self.root, "RTS", self.start)[0]["daily_volume"], 1)
+            self.assertEqual(chart.load_chart(self.root, "RTS", self.start)[0]["volume_diff"], 0)
 
     def test_changes_to_archives_and_membership(self):
         """Изменения, добавление и удаление буднего ZIP обновляют окно, а выходной ZIP независим."""
         chart.load_chart(self.root, "RTS", self.end, self.start)
         friday = self.start - timedelta(days=3)
         write_session(self.folder, friday, [("10:00:00", 100, 21)])
-        self.assertEqual(chart.load_chart(self.root, "RTS", self.start)[0]["mean_volume"], 2)
+        self.assertEqual(chart.load_chart(self.root, "RTS", self.start)[0]["volume_diff"], -1)
         write_session(self.folder, friday, [("10:00:00", 100, 41)])
-        self.assertEqual(chart.load_chart(self.root, "RTS", self.start)[0]["mean_volume"], 3)
+        self.assertEqual(chart.load_chart(self.root, "RTS", self.start)[0]["volume_diff"], -2)
         (self.folder / f"{friday:%Y%m%d}.zip").unlink()
-        self.assertEqual(chart.load_chart(self.root, "RTS", self.start)[0]["mean_volume"], 1)
+        self.assertEqual(chart.load_chart(self.root, "RTS", self.start)[0]["volume_diff"], 0)
         write_session(self.folder, self.start - timedelta(days=1), [("10:00:00", 100, 55)])
         with patch.object(chart, "read_day", side_effect=AssertionError("выходной сбросил кэш")):
-            self.assertEqual(chart.load_chart(self.root, "RTS", self.start)[0]["mean_volume"], 1)
+            self.assertEqual(chart.load_chart(self.root, "RTS", self.start)[0]["volume_diff"], 0)
         write_session(self.folder, self.start, [("10:00:00", 100, 81)])
         bars = chart.load_chart(self.root, "RTS", self.end, self.start)
-        self.assertEqual([b["daily_volume"] for b in bars], [81, 1])
-        self.assertEqual([b["mean_volume"] for b in bars], [1, 5])
+        self.assertEqual([b["volume_diff"] for b in bars], [80, -4])
+
+    def test_old_payload_is_replaced_by_signed_difference(self):
+        """Проверяет пересчёт старой записи и состав данных, записанных в SQLite."""
+        with patch.object(chart, "CACHE_VERSION", "weekday-volume-rates-v1"), \
+             patch.object(chart, "session_bars", return_value=[{"daily_volume": 1, "mean_volume": 1}]):
+            chart.load_chart(self.root, "RTS", self.start)
+        bars = chart.load_chart(self.root, "RTS", self.start)
+        with closing(sqlite3.connect(self.root / "delta_bar_finam_RTS" / "chart.sqlite3")) as db:
+            payload, = db.execute("SELECT bars FROM chart_days WHERE day=?", (str(self.start),)).fetchone()
+        saved, = json.loads(zlib.decompress(payload))
+        self.assertEqual([saved], bars)
+        self.assertEqual(saved["volume_diff"], 0)
+        self.assertNotIn("daily_volume", saved)
+        self.assertNotIn("mean_volume", saved)
 
 
 if __name__ == "__main__":

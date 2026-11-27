@@ -1,9 +1,9 @@
 r"""Ведёт ручной бэктест Finam от открытия одного дельта-бара до следующего.
 
 Открытые позиции оцениваются по последней раскрытой цене. В CSV сохраняются
-сделки, закрытый PnL в пунктах, четыре индикатора при входе и интенсивности
-покупок и продаж при выходе. Индикаторы берутся с последнего завершённого
-бара той же сессии. CSV и таблица в окне используют одну запись на позицию.
+сделки, закрытый PnL в пунктах, разница объёмов и две интенсивности при входе,
+а также интенсивности покупок и продаж при выходе. Индикаторы берутся с
+последнего завершённого бара той же сессии. CSV и таблица используют одну запись на позицию.
 Перемотка назад отменяет сделки убранного бара.
 Модуль запускается через chart.py, примеры из корня проекта:
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --symbol RTS --date 2026-11-11
@@ -21,7 +21,7 @@ from tempfile import NamedTemporaryFile
 RESULTS_DIR = Path(__file__).resolve().parent / "backtests"
 COLUMNS = ("position_id", "symbol", "side", "entry_bar", "entry_time", "entry_price",
            "exit_bar", "exit_time", "exit_price", "pnl_points",
-           "entry_daily_volume", "entry_mean_volume", "entry_buy_rate", "entry_sell_rate",
+           "entry_volume_diff", "entry_buy_rate", "entry_sell_rate",
            "close_buy_rate", "close_sell_rate")
 
 
@@ -36,8 +36,7 @@ class Position:
     exit_bar: int | None = None
     exit_time: str | None = None
     exit_price: Decimal | None = None
-    entry_daily_volume: int | None = None
-    entry_mean_volume: float | None = None
+    entry_volume_diff: float | None = None
     entry_buy_rate: float | None = None
     entry_sell_rate: float | None = None
     close_buy_rate: float | None = None
@@ -173,15 +172,14 @@ class Backtest:
         return {}
 
     def open_position(self, side):
-        """Записывает вход side (BUY или SELL) по открытию с индикаторами предыдущего бара этой сессии."""
+        """Записывает вход side (BUY или SELL) по открытию с разницей объёмов и интенсивностями предыдущего бара."""
         if side not in ("BUY", "SELL"):
             raise ValueError(f"Неизвестное направление позиции: {side}")
         bar = self.bar_at(self.cursor)
         if bar is not None:
             indicators = self._previous_bar_indicators(bar)
             position = Position(side, self.cursor + 1, bar["start_time"], Decimal(str(bar["open"])),
-                                entry_daily_volume=indicators.get("daily_volume"),
-                                entry_mean_volume=indicators.get("mean_volume"),
+                                entry_volume_diff=indicators.get("volume_diff"),
                                 entry_buy_rate=indicators.get("buy_rate"),
                                 entry_sell_rate=indicators.get("sell_rate"))
             self._save((*self.positions, position))

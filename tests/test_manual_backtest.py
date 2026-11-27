@@ -1,8 +1,9 @@
 r"""Проверяет пошаговый график, клавиши, индикаторы входа и выхода в CSV и оба вида PnL.
 
 Использует бары с совпадающими временами и дробными ценами, временный CSV
-и окно Qt без экрана. Сверяет все поля таблицы позиций с CSV и общую строку последнего бара и бара под
-курсором, включая отклонение объёма от среднего. Запуск из корня проекта:
+и окно Qt без экрана. Сверяет таблицу позиций с CSV и проверяет разницу
+объёмов в столбцах и в показаниях последнего бара и бара под курсором.
+Запуск из корня проекта:
     .\.venv\Scripts\python.exe -m unittest discover -s tests -p test_manual_backtest.py -v
 """
 
@@ -18,19 +19,19 @@ import unittest
 from unittest.mock import patch
 
 from finam_delta_bar_chart import chart
-from finam_delta_bar_chart.src import backtest
+from finam_delta_bar_chart.src import BUY_COLOR, SELL_COLOR, backtest
 from tests.test_finam_delta_chart import write_session
 
 
 def sample_bars():
     """Возвращает три бара с разными ценами и индикаторами и одинаковыми метками первых двух баров."""
-    samples = [("2026-11-10", 100.1, 30, 21.5, 0, 1.75),
-               ("2026-11-10", 102.4, 73, 56, 7, 2),
-               ("2026-11-11", 99.2, 18, 11, 3, 1)]
+    samples = [("2026-11-10", 100.1, 8.5, 0, 1.75),
+               ("2026-11-10", 102.4, -7.25, 7, 2),
+               ("2026-11-11", 99.2, 0, 3, 1)]
     return [dict(start_time=day + " 10:00:00", end_time=day + " 10:00:00", open=price,
-                 close=price + 1, high=price + 5, low=price - 2, daily_volume=volume,
-                 mean_volume=mean, buy_rate=buy, sell_rate=sell, threshold=10, delta=10, is_complete=1)
-            for day, price, volume, mean, buy, sell in samples]
+                 close=price + 1, high=price + 5, low=price - 2, volume_diff=difference,
+                 buy_rate=buy, sell_rate=sell, threshold=10, delta=10, is_complete=1)
+            for day, price, difference, buy, sell in samples]
 
 
 class BacktestTests(unittest.TestCase):
@@ -127,23 +128,23 @@ class BacktestTests(unittest.TestCase):
         self.assertEqual(self.rows(), [])
 
     def test_csv_snapshots_last_revealed_indicators_in_same_session(self):
-        """Проверяет четыре поля при входе, закрытии и откате, включая первый бар новой сессии."""
-        fields = ("entry_daily_volume", "entry_mean_volume", "entry_buy_rate", "entry_sell_rate")
+        """Сверяет разницу объёмов и интенсивности при входе, закрытии и откате."""
+        fields = ("entry_volume_diff", "entry_buy_rate", "entry_sell_rate")
         session = self.session
         session.open_position("BUY")
         first = self.rows()[0]
-        self.assertEqual(tuple(first)[-6:], (*fields, "close_buy_rate", "close_sell_rate"))
-        self.assertEqual([first[key] for key in fields], [""] * 4)
+        self.assertEqual(tuple(first)[10:], (*fields, "close_buy_rate", "close_sell_rate"))
+        self.assertEqual([first[key] for key in fields], [""] * len(fields))
         session.forward()
         session.open_position("SELL")
-        expected = ["30", "21.5", "0", "1.75"]
+        expected = ["8.5", "0", "1.75"]
         self.assertEqual([self.rows()[1][key] for key in fields], expected)
         session.forward()
         session.open_position("BUY")
         session.close_all()
         rows = self.rows()
         self.assertEqual([rows[1][key] for key in fields], expected)
-        self.assertEqual([rows[2][key] for key in fields], [""] * 4)
+        self.assertEqual([rows[2][key] for key in fields], [""] * len(fields))
         session.back()
         rows = self.rows()
         self.assertEqual(len(rows), 2)
@@ -255,7 +256,6 @@ class BacktestTests(unittest.TestCase):
 
         app = QApplication.instance() or QApplication([])
         bars = sample_bars()
-        bars[1]["mean_volume"] = 80.25
         window = BacktestWindow(backtest.Backtest(bars, "RTS", Path(self.folder) / "readout.csv"))
         self.addCleanup(window.close)
         window.show()
@@ -268,6 +268,13 @@ class BacktestTests(unittest.TestCase):
         QTest.keyClick(window, Qt.Key.Key_Right)
         QTest.keyClick(window, Qt.Key.Key_Right)
         self.assertIn("№2", latest.text())
+        positive, negative = chart.volume_bars
+        self.assertEqual((positive.opts["x"], positive.opts["height"]), ([0], [8.5]))
+        self.assertEqual((negative.opts["x"], negative.opts["height"]), ([1], [-7.25]))
+        self.assertEqual((positive.opts["brush"], negative.opts["brush"]), (BUY_COLOR, SELL_COLOR))
+        low, high = chart.volume.viewRange()[1]
+        self.assertLess(low, -7.25)
+        self.assertGreater(high, 8.5)
         for value in ("2026-11-10 10:00:00 МСК", "Δ +10/10", "Пок. 7.00", "Прод. 2.00", "Объём − среднее −7.25"):
             self.assertIn(value, latest.text())
         for pane in (chart.price, chart.volume):
@@ -285,7 +292,8 @@ class BacktestTests(unittest.TestCase):
         self.assertNotIn("Δ", hovered.text())
         QTest.keyClick(window, Qt.Key.Key_Right)
         self.assertIn("№3", latest.text())
-        self.assertIn("+7", latest.text())
+        self.assertIn("Объём − среднее 0", latest.text())
+        self.assertEqual((positive.opts["x"], negative.opts["x"]), ([0], [1]))
         QTest.keyClick(window, Qt.Key.Key_Left)
         self.assertIn("№2", latest.text())
         self.assertNotIn("Δ", hovered.text())

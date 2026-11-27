@@ -1,10 +1,11 @@
 r"""Показывает дельта-бары, индикаторы и позиции пошагового бэктеста в окне Qt.
 
 По стрелкам меняет бар или открывает позицию, по C закрывает все позиции.
-График рисует только раскрытые данные. В одной строке показаны последний
-завершённый бар и бар под мышью, включая отклонение объёма от среднего.
-Таблица показывает все поля CSV и текущий PnL открытых позиций. Над ней
-выведены итоги по открытым и закрытым позициям в пунктах.
+График рисует только раскрытые данные. Разницу объёмов показывает столбцами
+от нуля: зелёными вверх и красными вниз. В одной строке показаны последний
+завершённый бар и бар под мышью, включая ту же разницу. Таблица показывает
+все поля CSV, включая разницу при входе, и текущий PnL открытых позиций.
+Над ней выведены итоги по открытым и закрытым позициям в пунктах.
 Модуль вызывается из chart.py. Примеры запуска из корня проекта:
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --date 2026-11-11
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --symbol MIX --trades mix.csv
@@ -21,7 +22,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QGraphicsProxyWidget, QHBoxLayou
                              QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem,
                              QVBoxLayout, QWidget)
 
-from . import BUY_COLOR, SELL_COLOR, WINDOW
+from . import BUY_COLOR, SELL_COLOR, VOLUME_DIFF_LABEL, WINDOW, format_volume_diff
 from .backtest import COLUMNS
 
 
@@ -104,18 +105,19 @@ class ReplayChart(pg.GraphicsLayoutWidget):
         self.wicks = []
         rate_legend = self.price.addLegend(offset=(5, 4), brush="#ffffffda")
         vol_legend = self.volume.addLegend(offset=(5, 4), brush="#ffffffda")
-        for color, name, vol_name, width in (
-            (BUY_COLOR, "Покупки", "Объём с начала дня", 0.86),
-            (SELL_COLOR, "Продажи", f"Среднее за {WINDOW} сессий", 0.42),
+        self.volume.addItem(pg.InfiniteLine(0, angle=0, pen="#9aa7ac"), ignoreBounds=True)
+        for color, name, vol_name in (
+            (BUY_COLOR, "Покупки", "Выше среднего"),
+            (SELL_COLOR, "Продажи", "Ниже среднего"),
         ):
             curve = pg.PlotDataItem(pen=pg.mkPen(color, width=1.4), symbol="o", symbolSize=3,
                                     symbolBrush=color, symbolPen=None)
             self.rates.addItem(curve)
             rate_legend.addItem(curve, name)
             self.rate_lines.append(curve)
-            item = pg.BarGraphItem(x=[], height=[], width=width, brush=color, pen=None)
+            item = pg.BarGraphItem(x=[], y0=0, height=[], width=0.86, brush=color, pen=None)
             self.volume.addItem(item)
-            vol_legend.addItem(item, vol_name)
+            vol_legend.addItem(item, f"{vol_name} за {WINDOW} будних сессий")
             self.volume_bars.append(item)
             body = pg.BarGraphItem(x=[], y0=[], y1=[], width=0.65, pen=color, brush=color)
             self.price.addItem(body)
@@ -192,10 +194,9 @@ class ReplayChart(pg.GraphicsLayoutWidget):
         prefix = f"№{index + 1} · {stamp} МСК"
         if "close" not in bar:
             return f"{prefix} · Открытие {bar['open']}"
-        difference = bar["daily_volume"] - bar["mean_volume"]
-        volume_text = f"{difference:+,.2f}".rstrip("0").rstrip(".").replace(",", " ").replace("-", "−")
+        volume_text = format_volume_diff(bar["volume_diff"])
         return (f"{prefix} · Δ {bar['delta']:+}/{bar['threshold']} · "
-                f"Пок. {bar['buy_rate']:.2f} · Прод. {bar['sell_rate']:.2f} сд/с · Объём − среднее {volume_text}")
+                f"Пок. {bar['buy_rate']:.2f} · Прод. {bar['sell_rate']:.2f} сд/с · {VOLUME_DIFF_LABEL} {volume_text}")
 
     def draw_visible(self):
         """Обновляет свечи, шкалы и показания под мышью по раскрытым данным видимого интервала X."""
@@ -216,8 +217,10 @@ class ReplayChart(pg.GraphicsLayoutWidget):
         connect[:-1] = [a == b for a, b in zip(days, days[1:])]
         for line, field in zip(self.rate_lines, ("buy_rate", "sell_rate")):
             line.setData(x, [b[field] for b in bars], connect=connect)
-        for item, field in zip(self.volume_bars, ("daily_volume", "mean_volume")):
-            item.setOpts(x=x, height=[b[field] for b in bars])
+        differences = [b["volume_diff"] for b in bars]
+        for sign, item in zip((1, -1), self.volume_bars):
+            group = [(i, value) for i, value in zip(x, differences) if sign * value > 0]
+            item.setOpts(x=[i for i, _ in group], height=[value for _, value in group])
         cursor = self.session.cursor
         current = self.session.bar_at(cursor)
         prices = [b[field] for b in bars for field in ("low", "high")]
@@ -234,9 +237,11 @@ class ReplayChart(pg.GraphicsLayoutWidget):
         else:
             self.price.setYRange(0, 1, padding=0)
         peak_rate = max((max(b["buy_rate"], b["sell_rate"]) for b in bars), default=0)
-        peak_volume = max((max(b["daily_volume"], b["mean_volume"]) for b in bars), default=0)
         self.rates.setYRange(0, max(1, peak_rate * 1.45), padding=0)
-        self.volume.setYRange(0, max(1, peak_volume * 1.15), padding=0)
+        low = min(0, min(differences, default=0))
+        high = max(0, max(differences, default=0))
+        pad = max(0.05, (high - low) * 0.15) if high > low else 1
+        self.volume.setYRange(low - pad, high + pad, padding=0)
         self._update_hover()
 
 
@@ -289,7 +294,7 @@ class BacktestWindow(QMainWindow):
             "entry_bar": "Бар входа", "entry_time": "Время входа, МСК", "entry_price": "Цена входа",
             "exit_bar": "Бар выхода", "exit_time": "Время выхода, МСК", "exit_price": "Цена выхода",
             "open_pnl": "Открытый PnL, п.", "pnl_points": "Закрытый PnL, п.",
-            "entry_daily_volume": "Объём при входе, контр.", "entry_mean_volume": "Средний объём при входе, контр.",
+            "entry_volume_diff": f"{VOLUME_DIFF_LABEL} при входе, контр.",
             "entry_buy_rate": "Покупки при входе, сд/с", "entry_sell_rate": "Продажи при входе, сд/с",
             "close_buy_rate": "Покупки при выходе, сд/с", "close_sell_rate": "Продажи при выходе, сд/с",
         }

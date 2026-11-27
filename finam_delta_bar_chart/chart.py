@@ -2,12 +2,15 @@ r"""Строит график адаптивных дельта-баров из 
 
 Использует ядро из src для чтения ZIP, подбора порога и построения OHLC.
 График и экспорт PNG работают с русской локалью Windows.
-На свечи накладывает частоту направленных сделок. Под свечами сравнивает
-накопленный объём со средним к тому же времени. Для среднего объёма и порога
-дельты берёт одни и те же 20 предыдущих будних сессий со сделками.
+На свечи накладывает частоту направленных сделок. Под свечами строит столбцы
+разницы между накопленным объёмом и средним к тому же московскому времени.
+Для среднего объёма и порога дельты берёт одни и те же 20 предыдущих будних
+сессий со сделками. Положительная разница показана зелёным над нулём,
+отрицательная — красным под нулём. При нуле столбец отсутствует.
 Каждая рассчитанная сессия сохраняется в delta_bar_finam_RTS/chart.sqlite3 или
-delta_bar_finam_MIX/chart.sqlite3 под корнем архивов. Повторный запуск читает
-готовые дни из базы. Консоль показывает ход загрузки. Даты указаны по Москве.
+delta_bar_finam_MIX/chart.sqlite3 под корнем архивов с полем volume_diff.
+Повторный запуск читает готовые дни из базы. Консоль показывает ход загрузки.
+Даты указаны по Москве.
 Если архив за указанную дату отсутствует, консоль показывает полный путь к ZIP.
 В режиме --backtest раскрывает бары по одному, сохраняет в CSV позиции
 и индикаторы на входе, показывает открытый и закрытый PnL в пунктах без комиссий.
@@ -42,20 +45,20 @@ from time import monotonic
 from zipfile import BadZipFile
 
 if __package__:
-    from .src import BUY_COLOR, SELL_COLOR, WINDOW, delta_core
+    from .src import BUY_COLOR, SELL_COLOR, VOLUME_DIFF_LABEL, WINDOW, delta_core, format_volume_diff
     from .src.day_cache import open_cache
     from .src.delta_core import NS_SECOND, build_bars, calibrate, read_day
     from .src.finam_archives import DEFAULT_ROOT, archive_folder, discover
     from .src.finplot_compat import load_finplot
 else:
-    from src import BUY_COLOR, SELL_COLOR, WINDOW, delta_core
+    from src import BUY_COLOR, SELL_COLOR, VOLUME_DIFF_LABEL, WINDOW, delta_core, format_volume_diff
     from src.day_cache import open_cache
     from src.delta_core import NS_SECOND, build_bars, calibrate, read_day
     from src.finam_archives import DEFAULT_ROOT, archive_folder, discover
     from src.finplot_compat import load_finplot
 
 # Повышать при изменении локальных формул индикаторов или состава сохраняемых полей.
-CACHE_VERSION = "weekday-volume-rates-v1"
+CACHE_VERSION = "weekday-volume-diff-rates-v2"
 
 
 class ConsoleProgress:
@@ -124,11 +127,16 @@ class VolumeProfile:
 
 
 def session_bars(ticks, history, profiles):
-    """Возвращает свечи дня ticks с порогом по history и средним объёмом по profiles тех же будних сессий."""
+    """Возвращает свечи дня ticks с порогом по history, интенсивностями и разницей объёмов по profiles.
+
+    profiles содержит накопленные объёмы тех же будних сессий, что использует history.
+    Разница рассчитана к московскому времени закрытия каждого бара.
+    """
     bars = build_bars(ticks, calibrate(history).threshold)
     values = ticks.path.values
     previous = 0
-    daily_volume = 0
+    session_volume = 0
+    session_count = len(profiles)
     for bar in bars:
         first, last = bar["start_row"] - 1, bar["end_row"] - 1
         buys = sells = 0
@@ -140,10 +148,10 @@ def session_bars(ticks, history, profiles):
         close = ticks.times[last]
         # Доли секунды в архивах могут кодировать только порядок сделок.
         seconds = max(1, close // NS_SECOND - ticks.times[first] // NS_SECOND)
-        daily_volume += bar["volume"]
+        session_volume += bar["volume"]
+        historical_volume = sum(profile.at(close) for profile in profiles)
         bar.update(buy_rate=buys / seconds, sell_rate=sells / seconds,
-                   daily_volume=daily_volume,
-                   mean_volume=sum(profile.at(close) for profile in profiles) / len(profiles))
+                   volume_diff=(session_volume * session_count - historical_volume) / session_count)
     return bars
 
 
@@ -254,7 +262,7 @@ def load_range(cache, symbol, start, end, progress):
 
 
 def show_chart(bars, symbol, png=None):
-    """Показывает свечи bars инструмента symbol и среднее по будням.
+    """Показывает свечи bars инструмента symbol, интенсивности и столбцы разницы объёмов.
 
     При заданном пути png сохраняет изображение вместо открытия окна.
     Загружает finplot с поддержкой текущей локали Windows.
@@ -296,10 +304,16 @@ def show_chart(bars, symbol, png=None):
             b = bars[i]
             xtext = (f"{closes[i]} МСК · Δ {b['delta']:+} / {b['threshold']}\n"
                      f"Покупки {b['buy_rate']:.2f}, продажи {b['sell_rate']:.2f} сд/с\n"
-                     f"Объём {b['daily_volume']:,}, среднее {b['mean_volume']:,.1f}")
+                     f"{VOLUME_DIFF_LABEL} {format_volume_diff(b['volume_diff'])} контр.")
             if not b["is_complete"]:
                 xtext += " · остаток дня"
         return xtext, ytext
+
+    def volume_colors(item, _datasrc, rows):
+        """Разбивает строки rows из источника finplot на положительные и отрицательные для цветов item."""
+        difference = rows["volume_diff"]
+        yield item.rowcolors("bull") + [rows.loc[difference > 0]]
+        yield item.rowcolors("bear") + [rows.loc[difference < 0]]
 
     fplt.background = "#ffffff"
     fplt.odd_plot_background = "#fafbfb"
@@ -330,15 +344,16 @@ def show_chart(bars, symbol, png=None):
             curve.setFillLevel(0)
             curve.setBrush(pg.mkBrush(color + "24"))
 
-    for field, width, color, layer in (("daily_volume", 0.86, BUY_COLOR, -20),
-                                        ("mean_volume", 0.42, SELL_COLOR, -19)):
-        item = fplt.volume_ocv(data[["x", "open", "close", field]], candle_width=width, ax=volume)
-        item.colors.update(bull_frame=color, bull_body=color, bear_frame=color, bear_body=color)
-        # При отдалении нельзя складывать значения накопительного ряда соседних баров.
-        item.resamp = None
-        item.setZValue(layer)
-    fplt.add_legend(f"<span style='color:{BUY_COLOR}'>■ Объём с начала сессии</span>&nbsp;&nbsp;"
-                    f"<span style='color:{SELL_COLOR}'>■ Среднее за {WINDOW} будних сессий</span> · контракты", ax=volume)
+    difference = data["volume_diff"]
+    # finplot принимает отдельно значения для цвета и нижнюю и верхнюю границы столбца.
+    histogram = pd.DataFrame({"x": data.x, "zero": 0, "volume_diff": difference,
+                              "bottom": difference.clip(upper=0), "top": difference.clip(lower=0)})
+    item = fplt.volume_ocv(histogram, candle_width=0.68, ax=volume, colorfunc=volume_colors)
+    item.colors.update(bull_frame=BUY_COLOR, bull_body=BUY_COLOR, bear_frame=SELL_COLOR, bear_body=SELL_COLOR)
+    # При отдалении нельзя складывать разницы соседних баров.
+    item.resamp = None
+    volume.addItem(pg.InfiniteLine(0, angle=0, pen="#9aa7ac"), ignoreBounds=True)
+    fplt.add_legend(f"{VOLUME_DIFF_LABEL} за {WINDOW} будних сессий · контракты", ax=volume)
     caption = f"{symbol} · {period}"
     if closes[0][:10] == closes[-1][:10]:
         caption += f" · порог Δ {bars[-1]['threshold']}"
