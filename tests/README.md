@@ -37,3 +37,9 @@
 ```powershell
 .\.venv\Scripts\python.exe -m unittest tests.test_supertrend -v
 ```
+
+`test_cluster_volume.py` проверяет суммирование сделок по ценам и границам баров на временных ZIP. Тесты охватывают одинаковые метки времени, равные объёмы, дневной остаток, повторное чтение SQLite и пересчёт при изменении данных ZIP или границ. Проверка экспорта ищет синие точки в PNG и сверяет размещение обоих кэшей рядом.
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest tests.test_cluster_volume -v
+```
