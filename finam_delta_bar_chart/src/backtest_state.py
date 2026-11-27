@@ -28,7 +28,7 @@ STATE_VERSION = 1
 
 @dataclass(frozen=True)
 class ResumeSettings:
-    """Хранит источник, разрешённые даты торгового прогона и параметры СФ/SMA."""
+    """Хранит источник, фактический диапазон торгового прогона и параметры СФ/SMA."""
 
     symbol: str
     input_root: Path
@@ -214,7 +214,7 @@ class SavedBacktest(Backtest):
                 raise ValueError("Сохранённый выход не совпадает с открытием бара")
         self._init_state(bars, saved.config.symbol, saved.cursor, saved.positions)
         self.path, self.state_path = saved.csv_path, saved.state_path
-        self._sync_csv()
+        self._sync_csv(skip_if_unchanged=True)
 
     @property
     def journal_status(self):
@@ -242,10 +242,10 @@ class SavedBacktest(Backtest):
         finally:
             Path(temp.name).unlink(missing_ok=True)
 
-    def _sync_csv(self):
-        """Обновляет CSV из сохранённых позиций и запоминает ошибку для повтора."""
+    def _sync_csv(self, *, skip_if_unchanged=False):
+        """Обновляет CSV, при skip_if_unchanged сверяет содержимое и запоминает ошибку для повтора."""
         try:
-            self._write_csv(self.positions)
+            self._write_csv(self.positions, skip_if_unchanged=skip_if_unchanged)
         except OSError as exc:
             self._csv_error = exc
         else:
@@ -255,6 +255,8 @@ class SavedBacktest(Backtest):
         """Сохраняет шаг cursor и позиции в JSON, затем обновляет память и CSV."""
         changed = positions != self.positions
         self._write_state(cursor, positions)
-        self.cursor, self.positions = cursor, positions
+        self.cursor = cursor
+        if changed:
+            self.positions = positions
         if changed or self._csv_error is not None:
             self._sync_csv()

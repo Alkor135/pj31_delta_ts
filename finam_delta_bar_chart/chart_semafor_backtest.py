@@ -55,6 +55,8 @@ def main(argv=None):
                                                  history_start=source.history_start, progress=progress)
             finally:
                 progress.finish_line()
+            if first == len(bars):
+                raise ValueError("Для бэктеста нужен хотя бы один бар в торговом диапазоне")
 
             config = saved.config if saved is not None else ResumeSettings(
                 source.symbol, source.input_root.resolve(), date.fromisoformat(bars[first]["start_time"][:10]),

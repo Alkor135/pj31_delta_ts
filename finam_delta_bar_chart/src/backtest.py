@@ -139,8 +139,8 @@ class Backtest:
             return {"start_time": bar["start_time"], "open": bar["open"]}
         return None
 
-    def _write_csv(self, positions):
-        """Атомарно записывает журнал позиций positions в порядке COLUMNS."""
+    def _write_csv(self, positions, *, skip_if_unchanged=False):
+        """Атомарно записывает positions в порядке COLUMNS и сверяет старый CSV при skip_if_unchanged."""
         temp = NamedTemporaryFile(mode="w", encoding="utf-8-sig", newline="", dir=self.path.parent,
                                   prefix=self.path.name + ".", suffix=".tmp", delete=False)
         try:
@@ -149,6 +149,8 @@ class Backtest:
                 writer.writeheader()
                 for number, p in enumerate(positions, start=1):
                     writer.writerow(p.journal_record(number, self.symbol))
+            if skip_if_unchanged and self.path.is_file() and self.path.read_bytes() == Path(temp.name).read_bytes():
+                return
             os.replace(temp.name, self.path)
         finally:
             Path(temp.name).unlink(missing_ok=True)
@@ -157,7 +159,8 @@ class Backtest:
         """Записывает изменившиеся позиции и устанавливает шаг cursor после успешной записи."""
         if positions != self.positions:
             self._write_csv(positions)
-        self.cursor, self.positions = cursor, positions
+            self.positions = positions
+        self.cursor = cursor
 
     def forward(self):
         """Раскрывает текущую свечу и сдвигает курсор к следующему открытию либо к концу."""

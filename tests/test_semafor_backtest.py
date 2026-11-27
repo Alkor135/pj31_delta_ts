@@ -2,7 +2,7 @@ r"""Проверяет пошаговый бэктест с семафорами
 
 Запускает окно Qt без экрана и проверяет доступные индикаторы, откат
 семафоров, закрытие отдельных позиций, журнал, легенду, границы дней и счётчик входов.
-Также запускает новую точку входа с временными ZIP и скрытым прогревом.
+Также начинает и продолжает прогон из JSON на временных ZIP со скрытым прогревом.
 Команда ниже запускается из корня проекта.
     .\.venv\Scripts\python.exe -m unittest tests.test_semafor_backtest -v
 """
@@ -179,8 +179,8 @@ class SemaforBacktestTests(unittest.TestCase):
         window.buttons[0].click()
         self.assertIn("Торговых дней с входами: 0", window.summary.text())
 
-    def test_cli_runs_visible_session_with_hidden_warmup(self):
-        """Запускает окно через main и проверяет торговый диапазон и прогретую SMA."""
+    def test_cli_resumes_original_session_and_hidden_warmup(self):
+        """Продолжает через main исходную сессию после появления новых архивов."""
         from PyQt6.QtCore import QTimer
 
         from finam_delta_bar_chart.chart_semafor_backtest import main
@@ -212,12 +212,13 @@ class SemaforBacktestTests(unittest.TestCase):
                         observed.append((opening["start_time"][:10], window.session.finished,
                                          window.chart.points.ma_slow.tolist(), window.legend_button.text(),
                                          button_text))
+                        window.close()
                         break
             finally:
                 self.app.quit()
 
         QTimer.singleShot(0, inspect_window)
-        status = main(["--date", str(day), "--history-start", str(earlier),
+        status = main(["--history-start", str(earlier),
                        "--input-root", str(self.folder), "--ma-fast", "2", "--ma-slow", "3",
                        "--trades", str(journal)])
         self.assertEqual(status, 0)
@@ -225,3 +226,23 @@ class SemaforBacktestTests(unittest.TestCase):
         with journal.open(encoding="utf-8-sig", newline="") as stream:
             row = next(csv.DictReader(stream))
         self.assertEqual((row["entry_bar"], row["entry_time"][:10]), ("1", str(day)))
+
+        write_session(archives, day + timedelta(days=1), [("10:00:00", 200, 1), ("10:00:01", 204, 20)])
+        restored = []
+
+        def inspect_resumed_window():
+            """Собирает шаг, настройки и позиции восстановленного окна."""
+            try:
+                for window in self.app.topLevelWidgets():
+                    if isinstance(window, BacktestWindow) and window.isVisible():
+                        restored.append((window.session.cursor, window.session.finished,
+                                         window.chart.points.ma_slow.tolist(),
+                                         [p.entry_time[:10] for p in window.session.positions]))
+                        window.close()
+                        break
+            finally:
+                self.app.quit()
+
+        QTimer.singleShot(0, inspect_resumed_window)
+        self.assertEqual(main(["--resume", str(journal.with_suffix(".state.json"))]), 0)
+        self.assertEqual(restored, [(1, True, [103], [str(day)])])
