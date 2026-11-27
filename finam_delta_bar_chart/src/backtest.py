@@ -5,7 +5,8 @@ r"""Ведёт ручной бэктест Finam от открытия одно�
 а также интенсивности покупок и продаж при выходе. Индикаторы берутся с
 последнего завершённого бара той же сессии. CSV и таблица используют одну запись на позицию.
 Можно закрыть выбранную позицию или все открытые. Перемотка назад отменяет
-сделки убранного бара. Команды ниже запускаются из корня проекта.
+сделки убранного бара. Подкласс с JSON сохраняет также шаги без сделок.
+Команды ниже запускаются из корня проекта.
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --symbol RTS --date 2026-11-11
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --trades mix.csv --symbol MIX
     .\.venv\Scripts\python.exe -m finam_delta_bar_chart.chart_semafor_backtest --symbol MIX --date 2026-11-11
@@ -64,12 +65,7 @@ class Backtest:
 
     def __init__(self, bars, symbol, path=None):
         """Начинает прогон bars для symbol и создаёт CSV по path либо со свободным именем."""
-        if not bars:
-            raise ValueError("Для бэктеста нужен хотя бы один бар")
-        self._bars = bars
-        self.symbol = symbol
-        self.cursor = 0
-        self.positions = ()
+        self._init_state(bars, symbol, 0, ())
         if path is not None:
             self.path = Path(path).resolve()
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,11 +85,24 @@ class Backtest:
                 except FileExistsError:
                     continue
 
+    def _init_state(self, bars, symbol, cursor, positions):
+        """Устанавливает бары, инструмент symbol, шаг cursor и позиции без записи на диск."""
+        if not bars:
+            raise ValueError("Для бэктеста нужен хотя бы один бар")
+        self._bars = bars
+        self.symbol = symbol
+        self.cursor, self.positions = cursor, positions
+
     @staticmethod
     def _create_file(path):
         """Резервирует новый файл path и записывает заголовок CSV с кодировкой для Excel."""
         with path.open("x", encoding="utf-8-sig", newline="") as stream:
             csv.writer(stream).writerow(COLUMNS)
+
+    @property
+    def journal_status(self):
+        """Возвращает текст состояния журнала для строки состояния окна."""
+        return str(self.path)
 
     @property
     def finished(self):
@@ -130,8 +139,8 @@ class Backtest:
             return {"start_time": bar["start_time"], "open": bar["open"]}
         return None
 
-    def _save(self, positions):
-        """Атомарно записывает поля журнала для позиций positions в порядке COLUMNS и обновляет состояние."""
+    def _write_csv(self, positions):
+        """Атомарно записывает журнал позиций positions в порядке COLUMNS."""
         temp = NamedTemporaryFile(mode="w", encoding="utf-8-sig", newline="", dir=self.path.parent,
                                   prefix=self.path.name + ".", suffix=".tmp", delete=False)
         try:
@@ -143,17 +152,23 @@ class Backtest:
             os.replace(temp.name, self.path)
         finally:
             Path(temp.name).unlink(missing_ok=True)
-        self.positions = positions
+
+    def _commit(self, cursor, positions):
+        """Записывает изменившиеся позиции и устанавливает шаг cursor после успешной записи."""
+        if positions != self.positions:
+            self._write_csv(positions)
+        self.cursor, self.positions = cursor, positions
 
     def forward(self):
         """Раскрывает текущую свечу и сдвигает курсор к следующему открытию либо к концу."""
         if not self.finished:
-            self.cursor += 1
+            self._commit(self.cursor + 1, self.positions)
 
     def back(self):
         """Возвращает предыдущее открытие, удаляет входы убранного бара и отменяет его выходы с их индикаторами."""
         if self.cursor < 0:
             return
+        positions = self.positions
         if not self.finished:
             removed = self.cursor + 1
             positions = tuple(
@@ -161,9 +176,7 @@ class Backtest:
                         close_buy_rate=None, close_sell_rate=None) if p.exit_bar == removed else p
                 for p in self.positions if p.entry_bar != removed
             )
-            if positions != self.positions:
-                self._save(positions)
-        self.cursor -= 1
+        self._commit(self.cursor - 1, positions)
 
     def _previous_bar_indicators(self, bar):
         """Возвращает данные предыдущего раскрытого бара той же сессии, что и текущий bar, либо пустой словарь."""
@@ -183,7 +196,7 @@ class Backtest:
                                 entry_volume_diff=indicators.get("volume_diff"),
                                 entry_buy_rate=indicators.get("buy_rate"),
                                 entry_sell_rate=indicators.get("sell_rate"))
-            self._save((*self.positions, position))
+            self._commit(self.cursor, (*self.positions, position))
 
     def close_all(self):
         """Закрывает открытые позиции по текущему открытию и фиксирует интенсивности предыдущего бара сессии."""
@@ -208,4 +221,4 @@ class Backtest:
             for index, p in enumerate(self.positions)
         )
         if positions != self.positions:
-            self._save(positions)
+            self._commit(self.cursor, positions)

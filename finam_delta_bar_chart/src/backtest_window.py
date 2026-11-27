@@ -5,10 +5,12 @@ r"""Показывает дельта-бары, индикаторы и пози
 бара под курсором, позиции, два вида PnL и число дней с входами. Обычный бэктест рисует разницу
 объёмов знаковыми столбцами. Бэктест семафоров использует ценовую панель
 с дополнительными индикаторами, кнопкой легенды и закрытием по строкам.
+Строка состояния показывает пути сохранения и ошибки обновления журнала.
 Команды ниже запускаются из корня проекта.
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --date 2026-11-11
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --symbol MIX --trades mix.csv
     .\.venv\Scripts\python.exe -m finam_delta_bar_chart.chart_semafor_backtest --symbol RTS --date 2026-11-11
+    .\.venv\Scripts\python.exe -m finam_delta_bar_chart.chart_semafor_backtest --resume MIX_semafor.state.json
 """
 
 from functools import partial
@@ -350,20 +352,20 @@ class BacktestWindow(QMainWindow):
         ledger_layout.addWidget(self.table)
         splitter.addWidget(ledger)
         splitter.setSizes([565, 190])
-        self.statusBar().showMessage(str(session.path))
+        self.statusBar().showMessage(session.journal_status)
         self.refresh_positions()
         self.refresh_pnl()
         self.refresh_cursor()
 
     def execute(self, action):
-        """Выполняет команду action и обновляет оценку позиций после сделки или перемещения курсора."""
+        """Выполняет action и обновляет статус, курсор и оценки после сохранения шага."""
         cursor, positions = self.session.cursor, self.session.positions
         try:
             action()
         except OSError as exc:
-            self.statusBar().showMessage(f"Не удалось сохранить позиции: {exc}. Повторите действие.")
+            self.statusBar().showMessage(f"Не удалось сохранить действие: {exc}. Повторите действие.")
             return
-        self.statusBar().showMessage(str(self.session.path))
+        self.statusBar().showMessage(self.session.journal_status)
         if self.session.positions is not positions:
             self.refresh_positions()
         if self.session.cursor != cursor:
