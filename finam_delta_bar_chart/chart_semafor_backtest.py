@@ -1,7 +1,8 @@
 r"""Запускает ручной бэктест дельта-баров Finam с семафорами и островами SMA.
 
 Шаг раскрывает свечу и пересчитывает метки по доступной истории. Стрелки
-перематывают бары и открывают позиции, C закрывает их по текущему открытию.
+перематывают бары и открывают позиции. Кнопка «Закрыть» в строке завершает
+выбранную позицию по текущему открытию, C закрывает все.
 CSV сохраняет сделки и прежние поля журнала. В окне показаны цена,
 интенсивности и индикаторы СФ/SMA. Кнопка «Легенда» скрывает подписи.
 
@@ -53,7 +54,7 @@ def main(argv=None):
         print(f"Файл позиций: {session.path}", flush=True)
         chart_factory = partial(SemaforReplayChart, history=bars[:first], settings=settings,
                                 preset=args.preset, offset=offset)
-        show_backtest(session, chart_factory=chart_factory, toggle_legend=True)
+        show_backtest(session, chart_factory=chart_factory, toggle_legend=True, individual_close=True)
     except (ImportError, OSError, ValueError, BadZipFile, sqlite3.Error) as exc:
         print(f"Ошибка: {exc}", file=sys.stderr)
         return 1

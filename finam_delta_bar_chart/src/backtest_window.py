@@ -4,7 +4,7 @@ r"""Показывает дельта-бары, индикаторы и пози
 Окно показывает раскрытые данные, показатели последнего завершённого бара и
 бара под курсором, позиции и два вида PnL. Обычный бэктест рисует разницу
 объёмов знаковыми столбцами. Бэктест семафоров использует ценовую панель
-с дополнительными индикаторами и кнопкой легенды.
+с дополнительными индикаторами, кнопкой легенды и закрытием по строкам.
 Команды ниже запускаются из корня проекта.
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --date 2026-11-11
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --symbol MIX --trades mix.csv
@@ -266,8 +266,11 @@ class ReplayChart(pg.GraphicsLayoutWidget):
 class BacktestWindow(QMainWindow):
     """Объединяет управление, график и таблицу с открытым и закрытым PnL в пунктах."""
 
-    def __init__(self, session, *, chart_factory=ReplayChart, toggle_legend=False):
-        """Создаёт окно для session с графиком chart_factory и кнопкой легенды при toggle_legend."""
+    def __init__(self, session, *, chart_factory=ReplayChart, toggle_legend=False, individual_close=False):
+        """Создаёт окно session с графиком chart_factory.
+
+        toggle_legend добавляет кнопку легенды, individual_close — кнопки выхода в строках.
+        """
         super().__init__()
         self.session = session
         self.setWindowTitle(f"{session.symbol} · Ручной бэктест")
@@ -326,14 +329,20 @@ class BacktestWindow(QMainWindow):
         self.table_fields = list(COLUMNS)
         if self.chart.volume is None:
             self.table_fields.remove("entry_volume_diff")
-        self.open_pnl_column = self.table_fields.index("pnl_points")
-        self.table_fields.insert(self.open_pnl_column, "open_pnl")
-        self.table = QTableWidget(0, len(self.table_fields))
-        for column, field in enumerate(self.table_fields):
+        self.first_field_column = int(individual_close)
+        open_pnl_index = self.table_fields.index("pnl_points")
+        self.table_fields.insert(open_pnl_index, "open_pnl")
+        self.open_pnl_column = open_pnl_index + self.first_field_column
+        self.table = QTableWidget(0, len(self.table_fields) + self.first_field_column)
+        for column, field in enumerate(self.table_fields, self.first_field_column):
             header = QTableWidgetItem(headers.get(field, field))
             header.setToolTip(field if field != "open_pnl" else "Текущий результат открытой позиции в пунктах")
             self.table.setHorizontalHeaderItem(column, header)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        if individual_close:
+            self.table.setHorizontalHeaderItem(0, QTableWidgetItem("Действие"))
+            self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+            self.table.setColumnWidth(0, 86)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().hide()
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -363,7 +372,7 @@ class BacktestWindow(QMainWindow):
         self.refresh_cursor()
 
     def refresh_cursor(self):
-        """Показывает время и цену доступного открытия и включает применимые команды."""
+        """Показывает доступное открытие, обновляет команды и кнопки закрытия строк."""
         session = self.session
         bar = session.bar_at(session.cursor)
         if bar:
@@ -374,18 +383,33 @@ class BacktestWindow(QMainWindow):
                    bool(bar) and any(p.exit_bar is None for p in session.positions))
         for button, available in zip(self.buttons, enabled):
             button.setEnabled(available)
+        for button in self.position_close_buttons:
+            button.setEnabled(bar is not None)
 
     def refresh_positions(self):
-        """Заполняет таблицу записями журнала, показывая направление по-русски и закрытый PnL со знаком."""
+        """Заполняет таблицу из журнала и добавляет кнопки выхода для открытых строк, если включены."""
         positions = self.session.positions
+        self.position_close_buttons = []
         self.table.setRowCount(len(positions))
         for row, p in enumerate(positions):
+            if self.first_field_column:
+                button = self.table.cellWidget(row, 0)
+                if p.exit_bar is None:
+                    if button is None:
+                        button = QPushButton("Закрыть")
+                        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                        button.setToolTip("Закрыть эту позицию по текущей цене открытия")
+                        button.clicked.connect(partial(self.execute, partial(self.session.close_position, row)))
+                        self.table.setCellWidget(row, 0, button)
+                    self.position_close_buttons.append(button)
+                elif button is not None:
+                    self.table.removeCellWidget(row, 0)
             values = p.journal_record(row + 1, self.session.symbol)
             values["side"] = "Покупка (BUY)" if p.side == "BUY" else "Продажа (SELL)"
             if values["pnl_points"] is not None:
                 values["pnl_points"] = f"{values['pnl_points']:+f}"
             values["open_pnl"] = None
-            for column, field in enumerate(self.table_fields):
+            for column, field in enumerate(self.table_fields, self.first_field_column):
                 value = values[field]
                 self.table.setItem(row, column, QTableWidgetItem("—" if value is None else str(value)))
         self.table.scrollToBottom()
@@ -405,9 +429,10 @@ class BacktestWindow(QMainWindow):
                              f"Закрыто: {len(session.positions) - opened}     Открыто: {opened}")
 
 
-def show_backtest(session, *, chart_factory=ReplayChart, toggle_legend=False):
-    """Открывает окно session с графиком chart_factory и кнопкой легенды при toggle_legend."""
+def show_backtest(session, *, chart_factory=ReplayChart, toggle_legend=False, individual_close=False):
+    """Открывает окно session с графиком chart_factory и выбранными кнопками легенды и выхода."""
     app = pg.mkQApp()
-    window = BacktestWindow(session, chart_factory=chart_factory, toggle_legend=toggle_legend)
+    window = BacktestWindow(session, chart_factory=chart_factory, toggle_legend=toggle_legend,
+                            individual_close=individual_close)
     window.show()
     app.exec()

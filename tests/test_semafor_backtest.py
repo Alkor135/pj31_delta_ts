@@ -1,7 +1,7 @@
 r"""Проверяет пошаговый бэктест с семафорами и островами SMA.
 
 Запускает окно Qt без экрана и проверяет доступные индикаторы, откат
-семафоров, журнал сделок, легенду и чёрные разделители торговых дней.
+семафоров, закрытие отдельных позиций, журнал сделок, легенду и разделители дней.
 Также запускает новую точку входа с временными ZIP и скрытым прогревом.
 Команда ниже запускается из корня проекта.
     .\.venv\Scripts\python.exe -m unittest tests.test_semafor_backtest -v
@@ -43,7 +43,7 @@ class SemaforBacktestTests(unittest.TestCase):
                 depths=(3, 0, 3), deviation=0, ma_fast=2, ma_slow=3,
             ), preset="nuf", offset=1)
 
-        window = BacktestWindow(session, chart_factory=create_chart, toggle_legend=True)
+        window = BacktestWindow(session, chart_factory=create_chart, toggle_legend=True, individual_close=True)
         self.addCleanup(window.close)
         window.show()
         self.app.processEvents()
@@ -122,6 +122,40 @@ class SemaforBacktestTests(unittest.TestCase):
         window.buttons[0].click()
         self.assertEqual(dividers(), [])
 
+    def test_row_button_closes_only_selected_position_and_rewinds(self):
+        """Проверяет закрытие второй позиции, запись CSV и возврат кнопки при откате."""
+        window = self.open_window(sample_bars())
+        window.buttons[2].click()
+        window.buttons[3].click()
+        window.buttons[1].click()
+
+        button = window.table.cellWidget(1, 0)
+        self.assertEqual(button.text(), "Закрыть")
+        self.assertTrue(button.isEnabled())
+        button.click()
+
+        purchase, sale = window.session.positions
+        self.assertIsNone(purchase.exit_bar)
+        self.assertEqual((sale.side, sale.exit_bar, sale.exit_price), ("SELL", 2, Decimal("102.4")))
+        self.assertEqual(window.session.realized_pnl, Decimal("-2.3"))
+        self.assertEqual(window.session.unrealized_pnl, Decimal("2.3"))
+        self.assertTrue(window.table.cellWidget(0, 0).isEnabled())
+        self.assertIsNone(window.table.cellWidget(1, 0))
+        self.assertTrue(window.buttons[4].isEnabled())
+        with window.session.path.open(encoding="utf-8-sig", newline="") as stream:
+            first, second = list(csv.DictReader(stream))
+        self.assertEqual((first["exit_bar"], second["exit_bar"], second["pnl_points"]), ("", "2", "-2.3"))
+        self.assertEqual(second["close_sell_rate"], "1.75")
+
+        window.buttons[0].click()
+        self.assertIsNone(window.session.positions[1].exit_bar)
+        self.assertTrue(window.table.cellWidget(1, 0).isEnabled())
+        for _ in range(3):
+            window.buttons[1].click()
+        self.assertTrue(window.session.finished)
+        self.assertFalse(window.table.cellWidget(0, 0).isEnabled())
+        self.assertFalse(window.table.cellWidget(1, 0).isEnabled())
+
     def test_cli_runs_visible_session_with_hidden_warmup(self):
         """Запускает окно через main и проверяет торговый диапазон и прогретую SMA."""
         from PyQt6.QtCore import QTimer
@@ -149,9 +183,12 @@ class SemaforBacktestTests(unittest.TestCase):
                     if isinstance(window, BacktestWindow) and window.isVisible():
                         opening = window.session.bar_at(0)
                         window.buttons[2].click()
+                        close_button = window.table.cellWidget(0, 0)
+                        button_text = close_button.text() if close_button else None
                         window.buttons[1].click()
                         observed.append((opening["start_time"][:10], window.session.finished,
-                                         window.chart.points.ma_slow.tolist(), window.legend_button.text()))
+                                         window.chart.points.ma_slow.tolist(), window.legend_button.text(),
+                                         button_text))
                         break
             finally:
                 self.app.quit()
@@ -161,7 +198,7 @@ class SemaforBacktestTests(unittest.TestCase):
                        "--input-root", str(self.folder), "--ma-fast", "2", "--ma-slow", "3",
                        "--trades", str(journal)])
         self.assertEqual(status, 0)
-        self.assertEqual(observed, [(str(day), True, [103], "Легенда")])
+        self.assertEqual(observed, [(str(day), True, [103], "Легенда", "Закрыть")])
         with journal.open(encoding="utf-8-sig", newline="") as stream:
             row = next(csv.DictReader(stream))
         self.assertEqual((row["entry_bar"], row["entry_time"][:10]), ("1", str(day)))

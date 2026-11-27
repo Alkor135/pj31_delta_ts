@@ -4,10 +4,11 @@ r"""Ведёт ручной бэктест Finam от открытия одно�
 сделки, закрытый PnL в пунктах, разница объёмов и две интенсивности при входе,
 а также интенсивности покупок и продаж при выходе. Индикаторы берутся с
 последнего завершённого бара той же сессии. CSV и таблица используют одну запись на позицию.
-Перемотка назад отменяет сделки убранного бара.
-Модуль запускается через chart.py, примеры из корня проекта:
+Можно закрыть выбранную позицию или все открытые. Перемотка назад отменяет
+сделки убранного бара. Команды ниже запускаются из корня проекта.
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --symbol RTS --date 2026-11-11
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --trades mix.csv --symbol MIX
+    .\.venv\Scripts\python.exe -m finam_delta_bar_chart.chart_semafor_backtest --symbol MIX --date 2026-11-11
 """
 
 import csv
@@ -186,13 +187,25 @@ class Backtest:
 
     def close_all(self):
         """Закрывает открытые позиции по текущему открытию и фиксирует интенсивности предыдущего бара сессии."""
+        self._close_positions()
+
+    def close_position(self, row):
+        """Закрывает открытую позицию с номером строки row от нуля по текущему открытию."""
+        if 0 <= row < len(self.positions):
+            self._close_positions(row)
+
+    def _close_positions(self, row=None):
+        """Сохраняет выход для открытой позиции row или всех открытых, если row равен None."""
         bar = self.bar_at(self.cursor)
-        if bar is None or all(p.exit_bar is not None for p in self.positions):
+        if bar is None:
             return
         price = Decimal(str(bar["open"]))
         indicators = self._previous_bar_indicators(bar)
-        self._save(tuple(
+        positions = tuple(
             replace(p, exit_bar=self.cursor + 1, exit_time=bar["start_time"], exit_price=price,
                     close_buy_rate=indicators.get("buy_rate"), close_sell_rate=indicators.get("sell_rate"))
-            if p.exit_bar is None else p for p in self.positions
-        ))
+            if p.exit_bar is None and (row is None or index == row) else p
+            for index, p in enumerate(self.positions)
+        )
+        if positions != self.positions:
+            self._save(positions)
