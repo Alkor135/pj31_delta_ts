@@ -1,7 +1,7 @@
 r"""Проверяет пошаговый бэктест с семафорами и островами SMA.
 
 Запускает окно Qt без экрана и проверяет доступные индикаторы, откат
-семафоров, закрытие отдельных позиций, журнал сделок, легенду и разделители дней.
+семафоров, закрытие отдельных позиций, журнал, легенду, границы дней и счётчик входов.
 Также запускает новую точку входа с временными ZIP и скрытым прогревом.
 Команда ниже запускается из корня проекта.
     .\.venv\Scripts\python.exe -m unittest tests.test_semafor_backtest -v
@@ -155,6 +155,29 @@ class SemaforBacktestTests(unittest.TestCase):
         self.assertTrue(window.session.finished)
         self.assertFalse(window.table.cellWidget(0, 0).isEnabled())
         self.assertFalse(window.table.cellWidget(1, 0).isEnabled())
+
+    def test_summary_counts_distinct_entry_days_until_entries_are_rewound(self):
+        """Сверяет счётчик дат при повторных входах, закрытии и откате сделок."""
+        window = self.open_window(sample_bars())
+        self.assertIn("Торговых дней с входами: 0", window.summary.text())
+
+        window.buttons[2].click()
+        window.buttons[3].click()
+        self.assertIn("Торговых дней с входами: 1", window.summary.text())
+        window.buttons[1].click()
+        window.buttons[4].click()
+        self.assertIn("Закрыто: 2", window.summary.text())
+        self.assertIn("Торговых дней с входами: 1", window.summary.text())
+
+        window.buttons[1].click()
+        self.assertIn("Торговых дней с входами: 1", window.summary.text())
+        window.buttons[2].click()
+        self.assertIn("Торговых дней с входами: 2", window.summary.text())
+        window.buttons[0].click()
+        self.assertIn("Торговых дней с входами: 1", window.summary.text())
+        window.buttons[0].click()
+        window.buttons[0].click()
+        self.assertIn("Торговых дней с входами: 0", window.summary.text())
 
     def test_cli_runs_visible_session_with_hidden_warmup(self):
         """Запускает окно через main и проверяет торговый диапазон и прогретую SMA."""

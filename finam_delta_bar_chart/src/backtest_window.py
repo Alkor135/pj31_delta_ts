@@ -2,7 +2,7 @@ r"""Показывает дельта-бары, индикаторы и пози
 
 По стрелкам меняет бар или открывает позицию, по C закрывает все позиции.
 Окно показывает раскрытые данные, показатели последнего завершённого бара и
-бара под курсором, позиции и два вида PnL. Обычный бэктест рисует разницу
+бара под курсором, позиции, два вида PnL и число дней с входами. Обычный бэктест рисует разницу
 объёмов знаковыми столбцами. Бэктест семафоров использует ценовую панель
 с дополнительными индикаторами, кнопкой легенды и закрытием по строкам.
 Команды ниже запускаются из корня проекта.
@@ -415,18 +415,21 @@ class BacktestWindow(QMainWindow):
         self.table.scrollToBottom()
 
     def refresh_pnl(self):
-        """Переоценивает открытые строки по видимой цене и выводит оба итога в пунктах."""
+        """Обновляет оба вида PnL, число позиций и число московских дат с входами."""
         session = self.session
         price = session.mark_price
         opened = 0
+        entry_days = set()
         for row, position in enumerate(session.positions):
+            entry_days.add(position.entry_time[:10])
             if position.exit_bar is None:
                 opened += 1
                 item = self.table.item(row, self.open_pnl_column)
                 item.setText(f"{position.pnl_at(price):+f}" if price is not None else "—")
         self.summary.setText(f"Реализованный PnL: {session.realized_pnl:+f} п.     "
                              f"Нереализованный PnL: {session.unrealized_pnl:+f} п.     "
-                             f"Закрыто: {len(session.positions) - opened}     Открыто: {opened}")
+                             f"Закрыто: {len(session.positions) - opened}     Открыто: {opened}     "
+                             f"Торговых дней с входами: {len(entry_days)}")
 
 
 def show_backtest(session, *, chart_factory=ReplayChart, toggle_legend=False, individual_close=False):
