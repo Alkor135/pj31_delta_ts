@@ -4,6 +4,7 @@ r"""Показывает «Семафор» и острова SMA на дель�
 по порядку свечей, включая выбранную предысторию. На ценовой панели показаны
 острова SMA и метки NUF или FXi из pj24_delta_bars. Старшие солнышки обведены
 синим кольцом. Скрипт открывает интерактивное окно или сохраняет PNG.
+Параметры СФ/SMA и загрузка диапазона также используются в ручном бэктесте.
 
 Команды ниже запускаются из корня проекта.
     .\.venv\Scripts\python.exe .\finam_delta_bar_chart\chart_semafor.py --symbol RTS --date 2026-11-11
@@ -14,7 +15,6 @@ r"""Показывает «Семафор» и острова SMA на дель�
 import argparse
 from bisect import bisect_left
 from datetime import date
-from math import cos, isfinite, pi, sin
 from pathlib import Path
 import sqlite3
 import sys
@@ -27,6 +27,10 @@ if __package__:
     from .src.semafor import (
         DEFAULT_DEPTHS, DEFAULT_MA_FAST, DEFAULT_MA_SLOW, PRESETS, calculate_semafor, validate_settings,
     )
+    from .src.semafor_style import (
+        FXI_CENTER_COLOUR, ISLAND_COLOURS, LEVEL_STYLES, MARKER_SIDES, RING_COLOUR,
+        SMA_COLOURS, marker_style, semafor_details, sun_symbol,
+    )
 else:
     from chart import ConsoleProgress, load_chart
     from src.chart_view import show_delta_chart
@@ -34,39 +38,39 @@ else:
     from src.semafor import (
         DEFAULT_DEPTHS, DEFAULT_MA_FAST, DEFAULT_MA_SLOW, PRESETS, calculate_semafor, validate_settings,
     )
+    from src.semafor_style import (
+        FXI_CENTER_COLOUR, ISLAND_COLOURS, LEVEL_STYLES, MARKER_SIDES, RING_COLOUR,
+        SMA_COLOURS, marker_style, semafor_details, sun_symbol,
+    )
 
 OFFSETS = {"RTS": 40.0, "MIX": 100.0}
 
 
-def load_semafor_bars(input_root, symbol, end=None, start=None, *, history_start=None,
-                      progress=None, **settings):
-    """Возвращает видимые бары инструмента symbol, метки СФ и значения SMA.
+def load_semafor_range(input_root, symbol, end=None, start=None, *, history_start=None, progress=None):
+    """Возвращает бары symbol из input_root и индекс первого видимого бара.
 
-    input_root — корень архивов Finam, start и end — даты видимого диапазона.
-    history_start может расширить расчёт в прошлое. После расчёта скрытые
-    бары отбрасываются. progress получает ход загрузки, settings — настройки СФ и SMA.
+    start и end задают видимый диапазон. history_start добавляет скрытые
+    бары до него. progress получает ход загрузки Finam.
     """
     if history_start is not None and start is not None and history_start > start:
         raise ValueError("Начало предыстории должно быть не позже начала графика")
     bars = load_chart(input_root, symbol, end, history_start or start, progress=progress)
-    points = calculate_semafor(bars, **settings)
     visible_start = start.isoformat() if start else bars[-1]["end_time"][:10]
     first = bisect_left(bars, visible_start, key=lambda bar: bar["end_time"][:10])
+    return bars, first
+
+
+def load_semafor_bars(input_root, symbol, end=None, start=None, *, history_start=None,
+                      progress=None, **settings):
+    """Возвращает видимые бары symbol из input_root, метки СФ и значения SMA.
+
+    start и end задают видимый диапазон, history_start — начало прогрева.
+    progress получает ход загрузки, settings — настройки СФ и SMA.
+    """
+    bars, first = load_semafor_range(input_root, symbol, end, start,
+                                     history_start=history_start, progress=progress)
+    points = calculate_semafor(bars, **settings)
     return bars[first:], points.iloc[first:].reset_index(drop=True)
-
-
-def sun_symbol():
-    """Возвращает контур восьмилучевого солнышка для метки постоянного размера."""
-    from PyQt6.QtGui import QPainterPath
-
-    path = QPainterPath()
-    path.moveTo(0.5, 0.0)
-    for i in range(1, 16):
-        angle = i * pi / 8
-        radius = 0.5 if i % 2 == 0 else 0.25
-        path.lineTo(radius * cos(angle), radius * sin(angle))
-    path.closeSubpath()
-    return path
 
 
 def plot_sma_islands(fplt, axis, x, points):
@@ -75,15 +79,15 @@ def plot_sma_islands(fplt, axis, x, points):
 
     x_values = x.to_numpy(dtype=float)
     fast, slow = points.ma_fast.to_numpy(), points.ma_slow.to_numpy()
-    for direction, color in ((1, "#16a34a"), (-1, "#ef4444")):
+    for direction, color in ISLAND_COLOURS:
         mask = points.island_direction.to_numpy() == direction
         if mask.any():
             # Каждому бару соответствует одна полоса между средними.
             fill = pg.BarGraphItem(x=x_values[mask], y0=slow[mask], y1=fast[mask],
-                                   width=1, pen=None, brush=pg.mkBrush(color + "65"))
+                                   width=1, pen=None, brush=pg.mkBrush(color))
             fill.setZValue(-10)
             axis.addItem(fill)
-    for name, color in (("ma_fast", "#16803d"), ("ma_slow", "#d54747")):
+    for name, color in SMA_COLOURS:
         values = points[name]
         if values.notna().any():
             line = fplt.plot(x, values, color=color, width=1, ax=axis)
@@ -105,16 +109,14 @@ def show_chart(bars, symbol, points, png=None, *, depths, preset, offset):
         sun = sun_symbol()
         plot_sma_islands(fplt, axis, x, points)
         fplt.add_legend(f"Семафор · {preset.upper()}", ax=axis)
-        for level, (depth, size, label) in enumerate(zip(depths, (7, 12, 21), ("точки", "светики", "солнышки")), 1):
+        for level, (depth, (size, label)) in enumerate(zip(depths, LEVEL_STYLES), 1):
             if not depth:
                 continue
-            shape = sun if level == 3 or (preset == "nuf" and level == 2) else "o"
-            for side, color, sign in (("low", "#008820", -1), ("high", "#df2525", 1)):
+            for side, _, color, sign in MARKER_SIDES:
                 values = points[f"sf{level}_{side}"]
                 if not values.notna().any():
                     continue
-                if preset == "fxi" and level == 2:
-                    color = "#e5b400"
+                shape, color = marker_style(level, preset, color, sun)
                 positions = (values + sign * offset).rename(f"sf{level}_{side}_display")
                 item = fplt.plot(x, positions, style="o", color=color, width=size / 7, ax=axis)
                 item.setSymbol(shape)
@@ -123,13 +125,13 @@ def show_chart(bars, symbol, points, png=None, *, depths, preset, offset):
                 item.setZValue(19 + level)
                 if level == 3:
                     ring = pg.ScatterPlotItem(x=item.xData, y=item.yData, size=size + 8,
-                                              symbol="o", pen=pg.mkPen("#2563eb", width=2),
+                                              symbol="o", pen=pg.mkPen(RING_COLOUR, width=2),
                                               brush=None, pxMode=True)
                     ring.setZValue(23)
                     axis.addItem(ring, ignoreBounds=True)
                 if preset == "fxi" and level == 3:
                     center = fplt.plot(x, positions.rename(f"sf{level}_{side}_center"),
-                                       style="o", color="#ffe33d", width=6 / 7,
+                                       style="o", color=FXI_CENTER_COLOUR, width=6 / 7,
                                        ax=axis, zoomscale=False)
                     center.setDownsampling(auto=False)
                     center.setZValue(24)
@@ -137,32 +139,21 @@ def show_chart(bars, symbol, points, png=None, *, depths, preset, offset):
 
     def read_overlay(index):
         """Возвращает значения SMA и цены меток бара index без декоративного отступа."""
-        bar = points.iloc[index]
-        labels = []
-        if isfinite(bar.ma_fast) and isfinite(bar.ma_slow):
-            labels.append(f"SMA {points.attrs['ma_fast']}/{points.attrs['ma_slow']} "
-                          f"{bar.ma_fast:.12g}/{bar.ma_slow:.12g}")
-        for level, depth in enumerate(depths, 1):
-            for side, label in (("low", "низ"), ("high", "верх")):
-                value = bar[f"sf{level}_{side}"]
-                if isfinite(value):
-                    labels.append(f"СФ {depth} {label} {value:.12g}")
-        return " · ".join(labels) if labels else "Семафор · —"
+        return semafor_details(points, index, depths) or "Семафор · —"
 
     show_delta_chart(bars, symbol, png, title="Дельта-бары · Семафор и острова SMA",
                      draw_overlay=draw_overlay, read_overlay=read_overlay)
 
 
-def main(argv=None):
-    """Разбирает аргументы argv, строит график и возвращает код завершения."""
-    parser = argparse.ArgumentParser(description="Дельта-бары Finam с Семафором и островами SMA")
+def semafor_parser(description):
+    """Создаёт парсер с описанием description и общими аргументами графика и бэктеста."""
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--symbol", choices=("RTS", "MIX"), default="RTS", help="инструмент (по умолчанию RTS)")
     parser.add_argument("--date", "--end", dest="date", type=date.fromisoformat,
                         help="последний день графика ГГГГ-ММ-ДД (по умолчанию последняя сессия с тиками)")
     parser.add_argument("--start", type=date.fromisoformat, help="первый видимый день графика включительно")
     parser.add_argument("--history-start", type=date.fromisoformat, help="первый день расчёта с учётом скрытой предыстории")
     parser.add_argument("--input-root", type=Path, default=DEFAULT_ROOT, help=f"корень тиковых архивов ({DEFAULT_ROOT})")
-    parser.add_argument("--png", type=Path, help="сохранить график в PNG")
     parser.add_argument("--preset", choices=tuple(PRESETS), default="nuf", help="вариант семафора (по умолчанию nuf)")
     parser.add_argument("--depths", type=int, nargs=3, default=DEFAULT_DEPTHS, metavar=("МАЛ", "СРЕД", "СТАРШ"),
                         help="три глубины в барах (по умолчанию 5 12 34, 0 отключает уровень)")
@@ -174,8 +165,11 @@ def main(argv=None):
                         help=f"период быстрой SMA в барах (по умолчанию {DEFAULT_MA_FAST})")
     parser.add_argument("--ma-slow", type=int, default=DEFAULT_MA_SLOW,
                         help=f"период медленной SMA в барах (по умолчанию {DEFAULT_MA_SLOW})")
-    args = parser.parse_args(argv)
+    return parser
 
+
+def semafor_settings(parser, args):
+    """Проверяет аргументы args через parser и возвращает настройки расчёта и отступ меток."""
     default_deviation, default_backstep = PRESETS[args.preset]
     offset = OFFSETS[args.symbol] if args.offset is None else args.offset
     try:
@@ -190,7 +184,15 @@ def main(argv=None):
             raise ValueError("Начало графика позже конечной даты")
     except ValueError as exc:
         parser.error(str(exc))
+    return settings, offset
 
+
+def main(argv=None):
+    """Разбирает аргументы argv, строит график и возвращает код завершения."""
+    parser = semafor_parser("Дельта-бары Finam с Семафором и островами SMA")
+    parser.add_argument("--png", type=Path, help="сохранить график в PNG")
+    args = parser.parse_args(argv)
+    settings, offset = semafor_settings(parser, args)
     try:
         print(f"{args.symbol} · Поиск архивов и проверка дневного кэша…", file=sys.stderr, flush=True)
         progress = ConsoleProgress(sys.stderr)
