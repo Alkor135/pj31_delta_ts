@@ -7,6 +7,7 @@ r"""Строит график адаптивных дельта-баров из 
 Для среднего объёма и порога дельты берёт одни и те же 20 предыдущих будних
 сессий со сделками. Положительная разница показана зелёным над нулём,
 отрицательная — красным под нулём. При нуле столбец отсутствует.
+При открытии графика и экспорте PNG нижней панели отводится около одной шестой высоты.
 Каждая рассчитанная сессия сохраняется в delta_bar_finam_RTS/chart.sqlite3 или
 delta_bar_finam_MIX/chart.sqlite3 под корнем архивов с полем volume_diff.
 Повторный запуск читает готовые дни из базы. Консоль показывает ход загрузки.
@@ -26,6 +27,8 @@ delta_bar_finam_MIX/chart.sqlite3 под корнем архивов с поле
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --symbol MIX --trades mix.csv
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --start 2026-09-01 --symbol RTS
     .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --start 2026-09-01 --symbol MIX
+    .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --symbol RTS --start 2026-09-01 --trades rts.csv
+    .\.venv\Scripts\python.exe finam_delta_bar_chart\chart.py --backtest --symbol MIX --start 2026-09-01 --trades mix.csv
 """
 
 import argparse
@@ -264,6 +267,7 @@ def load_range(cache, symbol, start, end, progress):
 def show_chart(bars, symbol, png=None):
     """Показывает свечи bars инструмента symbol, интенсивности и столбцы разницы объёмов.
 
+Нижней панели отводится около одной шестой высоты графика.
     При заданном пути png сохраняет изображение вместо открытия окна.
     Загружает finplot с поддержкой текущей локали Windows.
     """
@@ -324,6 +328,8 @@ def show_chart(bars, symbol, png=None):
     fplt.grid_alpha = 0.10
     fplt.candle_bull_color = fplt.candle_bull_body_color = "#19704c"
     fplt.candle_bear_color = fplt.candle_bear_body_color = "#ad313f"
+    # Вес 5 у ценовой панели и 1 у индикатора дают долю 1/6 вместо штатной 1/3.
+    fplt.axis_height_factor = {0: 5}
     fplt.autoviewrestore(False)
     app = pg.mkQApp()
     if png and sys.platform == "win32":

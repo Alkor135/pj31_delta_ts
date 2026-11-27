@@ -1,7 +1,7 @@
 r"""Проверяет автономный запуск графика, окно Qt и экспорт PNG при локали ru_RU.
 
-Запускает график напрямую и как модуль. На временных ZIP проверяет, что
-красные столбцы разницы находятся ниже зелёных на нижней панели PNG.
+Запускает график напрямую и как модуль. Проверяет высоту панели индикатора
+при открытии окна и расположение цветных столбцов в PNG на временных ZIP.
 Запуск из корня проекта:
     .\.venv\Scripts\python.exe -m unittest discover -s tests -p test_standalone_chart.py -v
 """
@@ -40,7 +40,7 @@ class StandaloneChartTests(unittest.TestCase):
                     self.assertIn("--input-root", result.stdout)
 
     def test_russian_locale_allows_window_and_png(self):
-        """Проверяет окно и цвета знаковых столбцов в PNG при русской локали."""
+        """Проверяет высоту панели в окне и цвета столбцов в PNG при русской локали."""
         project = Path(__file__).resolve().parents[1]
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -70,9 +70,12 @@ if "--png" not in sys.argv:
     app = QApplication([])
 
     def close_window():
-        """Подтверждает, что окно RTS открыто, и завершает цикл Qt."""
-        if any(window.isVisible() and "RTS" in window.windowTitle() for window in app.topLevelWidgets()):
-            print("RTS window shown", flush=True)
+        """Выводит долю высоты нижней панели окна RTS и завершает цикл Qt."""
+        for window in app.topLevelWidgets():
+            if window.isVisible() and "RTS" in window.windowTitle():
+                price, indicator = window.axs
+                print(indicator.height() / (price.height() + indicator.height()), flush=True)
+                break
         app.quit()
 
     QTimer.singleShot(0, close_window)
@@ -99,7 +102,7 @@ raise SystemExit(result)
                         picture = QImage(str(png))
                         positive, negative = QColor(BUY_COLOR).rgb(), QColor(SELL_COLOR).rgb()
                         rows = {positive: set(), negative: set()}
-                        for y in range(picture.height() * 2 // 3, picture.height() - 45, 3):
+                        for y in range(picture.height() * 5 // 6, picture.height() - 45, 3):
                             for x in range(40, picture.width() - 80, 4):
                                 pixel = picture.pixel(x, y)
                                 if pixel in rows:
@@ -108,4 +111,5 @@ raise SystemExit(result)
                         self.assertTrue(rows[negative])
                         self.assertLessEqual(max(rows[positive]), min(rows[negative]))
                     else:
-                        self.assertIn("RTS window shown", result.stdout)
+                        fraction = float(result.stdout.strip())
+                        self.assertAlmostEqual(fraction, 1 / 6, delta=0.035)
