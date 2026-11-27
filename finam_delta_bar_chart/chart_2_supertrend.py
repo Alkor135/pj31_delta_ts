@@ -9,7 +9,8 @@ r"""Показывает адаптивные дельта-бары Finam с д�
 Команды ниже запускаются из корня проекта.
     .\.venv\Scripts\python.exe .\finam_delta_bar_chart\chart_2_supertrend.py --symbol RTS --date 2026-11-11
     .\.venv\Scripts\python.exe -m finam_delta_bar_chart.chart_2_supertrend --symbol MIX --start 2026-11-09 --date 2026-11-11 --fast-period 8 --fast-multiplier 2 --slow-period 21 --slow-multiplier 4 --png MIX_supertrend.png
-"""
+    .\.venv\Scripts\python.exe -m finam_delta_bar_chart.chart_2_supertrend --symbol MIX --start 2026-09-01
+    """
 
 import argparse
 from datetime import date
