@@ -43,3 +43,9 @@
 ```powershell
 .\.venv\Scripts\python.exe -m unittest tests.test_cluster_volume -v
 ```
+
+`test_semafor.py` сверяет экстремумы CountZZ и смену последней метки с исходными примерами, проверяет Point и отключение уровня через нулевую глубину. Проверки на временных ZIP покрывают скрытый прогрев, отсечение будущей даты и оформление FXi в экспортированном PNG.
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest tests.test_semafor -v
+```
