@@ -8,6 +8,7 @@ r"""Показывает дельта-бары Finam и цену максима�
 Команды ниже запускаются из корня проекта.
     .\.venv\Scripts\python.exe .\finam_delta_bar_chart\chart_claster_max_volume.py --symbol RTS --date 2026-11-11
     .\.venv\Scripts\python.exe -m finam_delta_bar_chart.chart_claster_max_volume --symbol MIX --start 2026-11-09 --date 2026-11-11 --png MIX_clusters.png
+    .\.venv\Scripts\python.exe -m finam_delta_bar_chart.chart_claster_max_volume --symbol MIX --start 2026-09-01
 """
 
 import argparse
