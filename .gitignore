@@ -1,6 +1,9 @@
 # Личные результаты ручных бэктестов
 /finam_delta_bar_chart/backtests/
 
+# Временная папка утилиты pipreqsnb
+/__temp_pipreqsnb_folder/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
