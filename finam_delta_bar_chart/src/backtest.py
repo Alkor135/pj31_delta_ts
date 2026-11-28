@@ -1,6 +1,7 @@
 r"""Ведёт ручной бэктест Finam от открытия одного дельта-бара до следующего.
 
-Открытые позиции оцениваются по последней раскрытой цене. В CSV сохраняются
+Открытые позиции оцениваются по последней раскрытой цене. Дневной PnL
+учитывает изменение результата за текущую московскую дату. В CSV сохраняются
 сделки, закрытый PnL в пунктах, разница объёмов и две интенсивности при входе,
 а также интенсивности покупок и продаж при выходе. Индикаторы берутся с
 последнего завершённого бара той же сессии. CSV и таблица используют одну запись на позицию.
@@ -12,6 +13,7 @@ r"""Ведёт ручной бэктест Finam от открытия одно�
     .\.venv\Scripts\python.exe -m finam_delta_bar_chart.chart_semafor_backtest --symbol MIX --date 2026-11-11
 """
 
+from bisect import bisect_left
 import csv
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -129,6 +131,33 @@ class Backtest:
         if price is None:
             return Decimal(0)
         return sum((p.pnl_at(price) for p in self.positions if p.exit_bar is None), Decimal(0))
+
+    @property
+    def daily_pnl(self):
+        """Возвращает изменение PnL за московский день текущего шага в пунктах.
+
+        Выходы дня учитываются по цене исполнения, открытые позиции — по
+        видимой цене. Для перенесённых позиций отсчёт идёт от закрытия
+        предыдущего дня. При откате используются восстановленные сделки.
+        """
+        price = self.mark_price
+        if price is None:
+            return Decimal(0)
+
+        index = min(self.cursor, len(self._bars) - 1)
+        day = self._bars[index]["start_time"][:10]
+        first = bisect_left(self._bars, day, hi=index + 1, key=lambda bar: bar["start_time"][:10])
+        previous_close = Decimal(str(self._bars[first - 1]["close"])) if first else None
+        total = Decimal(0)
+        for position in self.positions:
+            # Номера баров в позициях начинаются с единицы.
+            if position.exit_bar is not None and position.exit_bar <= first:
+                continue
+            exit_or_mark = position.exit_price if position.exit_price is not None else price
+            total += position.pnl_at(exit_or_mark)
+            if position.entry_bar <= first:
+                total -= position.pnl_at(previous_close)
+        return total
 
     def bar_at(self, index):
         """Возвращает видимые поля бара index (от нуля) или None за границами открытой истории."""

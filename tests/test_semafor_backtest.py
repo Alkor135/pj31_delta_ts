@@ -1,7 +1,8 @@
 r"""Проверяет пошаговый бэктест с семафорами и островами SMA.
 
 Запускает окно Qt без экрана и проверяет доступные индикаторы, откат
-семафоров, закрытие отдельных позиций, журнал, легенду, границы дней и счётчик входов.
+семафоров, закрытие отдельных позиций, журнал, легенду, границы дней,
+счётчик входов и общий дневной PnL.
 Также начинает и продолжает прогон из JSON на временных ZIP со скрытым прогревом.
 Команда ниже запускается из корня проекта.
     .\.venv\Scripts\python.exe -m unittest tests.test_semafor_backtest -v
@@ -178,6 +179,30 @@ class SemaforBacktestTests(unittest.TestCase):
         window.buttons[0].click()
         window.buttons[0].click()
         self.assertIn("Торговых дней с входами: 0", window.summary.text())
+
+    def test_summary_marks_daily_pnl_across_session_and_rewind(self):
+        """Сверяет сумму PnL текущей даты, перенос через ночь, конец прогона и откат."""
+        window = self.open_window(sample_bars())
+        self.assertIn("Общий дневной PnL: +0 п.", window.summary.text())
+        window.buttons[2].click()
+        window.buttons[2].click()
+        window.buttons[1].click()
+        window.table.cellWidget(0, 0).click()
+        prefix = "Реализованный PnL: +2.3 п.     Нереализованный PnL: +2.3 п.     Общий дневной PnL: +4.6 п."
+        self.assertTrue(window.summary.text().startswith(prefix))
+
+        window.buttons[1].click()
+        self.assertIn("Общий дневной PnL: -4.2 п.", window.summary.text())
+        window.table.cellWidget(1, 0).click()
+        self.assertIn("Общий дневной PnL: -4.2 п.", window.summary.text())
+        window.buttons[2].click()
+        window.buttons[1].click()
+        self.assertIn("Общий дневной PnL: -3.2 п.", window.summary.text())
+
+        window.buttons[0].click()
+        self.assertIn("Общий дневной PnL: -4.2 п.", window.summary.text())
+        window.buttons[0].click()
+        self.assertTrue(window.summary.text().startswith(prefix))
 
     def test_cli_resumes_original_session_and_hidden_warmup(self):
         """Продолжает через main исходную сессию после появления новых архивов."""
