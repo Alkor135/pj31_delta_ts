@@ -2,7 +2,7 @@ r"""Показывает дельта-бары, индикаторы и пози
 
 По стрелкам меняет бар или открывает позицию, по C закрывает все позиции.
 Окно показывает раскрытые данные, показатели последнего завершённого бара и
-бара под курсором, позиции, накопленный и дневной PnL и число дней с входами.
+бара под курсором, треугольники входа и выхода, позиции и PnL.
 Обычный бэктест рисует разницу
 объёмов знаковыми столбцами. Бэктест семафоров использует ценовую панель
 с дополнительными индикаторами, кнопкой легенды и закрытием по строкам.
@@ -14,6 +14,7 @@ r"""Показывает дельта-бары, индикаторы и пози
     .\.venv\Scripts\python.exe -m finam_delta_bar_chart.chart_semafor_backtest --resume MIX_semafor.state.json
 """
 
+from collections import Counter
 from functools import partial
 from math import ceil, floor
 
@@ -27,6 +28,8 @@ from PyQt6.QtWidgets import (QAbstractItemView, QGraphicsProxyWidget, QHBoxLayou
 
 from . import BUY_COLOR, SELL_COLOR, VOLUME_DIFF_LABEL, WINDOW, format_volume_diff
 from .backtest import COLUMNS
+
+TRADE_MARKER_SIZE = 13
 
 
 class TimeAxis(pg.AxisItem):
@@ -66,7 +69,7 @@ class BarReadout(QLabel):
 
 
 class ReplayChart(pg.GraphicsLayoutWidget):
-    """Рисует раскрытую историю, интенсивности и при необходимости разницу объёмов."""
+    """Рисует раскрытую историю, метки сделок, интенсивности и разницу объёмов."""
 
     def __init__(self, session, *, show_volume_diff=True):
         """Создаёт панели прогона session и строку показаний. show_volume_diff включает разницу объёмов."""
@@ -133,6 +136,11 @@ class ReplayChart(pg.GraphicsLayoutWidget):
             self.bodies.append(body)
             self.wicks.append(self.price.plot(pen=color, connect="pairs"))
         self.open_mark = self.price.plot(pen=pg.mkPen("#2457aa", width=3))
+        self.trade_brushes = {"BUY": pg.mkBrush("#2563eb"), "SELL": pg.mkBrush("#800020")}
+        self.trade_markers = pg.ScatterPlotItem(size=TRADE_MARKER_SIZE, pen=pg.mkPen("w", width=1),
+                                               hoverable=True, tip=self._trade_tooltip)
+        self.trade_markers.setZValue(30)
+        self.price.addItem(self.trade_markers, ignoreBounds=True)
         self._setup_overlays()
         self.last_details, self.hover_details = BarReadout(), BarReadout()
         details = QWidget()
@@ -151,6 +159,7 @@ class ReplayChart(pg.GraphicsLayoutWidget):
         self.scene().sigMouseMoved.connect(self._hover)
         self.price.setXRange(-2, 25, padding=0)
         self.price.vb.sigXRangeChanged.connect(self.draw_visible)
+        self.price.vb.sigResized.connect(self.draw_trade_markers)
         self.step()
 
     def _setup_overlays(self):
@@ -217,8 +226,43 @@ class ReplayChart(pg.GraphicsLayoutWidget):
             details += f" · {VOLUME_DIFF_LABEL} {format_volume_diff(bar['volume_diff'])}"
         return details
 
+    @staticmethod
+    def _trade_tooltip(x, y, data):
+        """Возвращает готовый текст data для метки в координатах x и y."""
+        return data
+
+    def draw_trade_markers(self):
+        """Строит видимые метки сделок по позициям текущего шага и группирует совпадения."""
+        left, right = self.price.viewRange()[0]
+        groups = {}
+        for position in self.session.positions:
+            for action, number, price in (("entry", position.entry_bar, position.entry_price),
+                                          ("exit", position.exit_bar, position.exit_price)):
+                if number is None or not left - 0.5 <= number - 1 <= right + 0.5:
+                    continue
+                counts = groups.setdefault((number - 1, price), Counter())
+                counts[action, position.side] += 1
+
+        # Разводим разные виды сделок на одной цене внутри ширины бара.
+        spacing = min(0.30, (TRADE_MARKER_SIZE + 2) * (right - left) / max(1, self.price.vb.width()))
+        spots = []
+        for (bar, price), counts in groups.items():
+            middle = (len(counts) - 1) / 2
+            for slot, ((action, side), count) in enumerate(sorted(counts.items())):
+                entering = action == "entry"
+                label = "Вход" if entering else "Выход"
+                direction = "Покупка" if side == "BUY" else "Продажа"
+                spots.append({
+                    "pos": (bar + (slot - middle) * spacing, float(price)),
+                    "symbol": "t2" if entering else "t3",
+                    "brush": self.trade_brushes[side],
+                    "data": f"{direction} · {label} · Бар {bar + 1}\nЦена {price:f} · Сделок {count}",
+                })
+        self.price.vb.setToolTip("")
+        self.trade_markers.setData(spots=spots)
+
     def draw_visible(self):
-        """Обновляет свечи, шкалы и показания под мышью по раскрытым данным видимого интервала X."""
+        """Обновляет свечи, сделки, шкалы и показания видимого интервала X."""
         left, right = self.price.viewRange()[0]
         first = max(0, floor(left))
         stop = max(first, min(self.session.cursor, ceil(right) + 1))
@@ -263,6 +307,7 @@ class ReplayChart(pg.GraphicsLayoutWidget):
             high = max(0, max(differences, default=0))
             pad = max(0.05, (high - low) * 0.15) if high > low else 1
             self.volume.setYRange(low - pad, high + pad, padding=0)
+        self.draw_trade_markers()
         self._update_hover()
 
 
@@ -367,10 +412,13 @@ class BacktestWindow(QMainWindow):
             self.statusBar().showMessage(f"Не удалось сохранить действие: {exc}. Повторите действие.")
             return
         self.statusBar().showMessage(self.session.journal_status)
-        if self.session.positions is not positions:
+        positions_changed = self.session.positions is not positions
+        if positions_changed:
             self.refresh_positions()
         if self.session.cursor != cursor:
             self.chart.step()
+        elif positions_changed:
+            self.chart.draw_trade_markers()
         self.refresh_pnl()
         self.refresh_cursor()
 

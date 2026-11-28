@@ -2,7 +2,7 @@ r"""Проверяет пошаговый бэктест с семафорами
 
 Запускает окно Qt без экрана и проверяет доступные индикаторы, откат
 семафоров, закрытие отдельных позиций, журнал, легенду, границы дней,
-счётчик входов и общий дневной PnL.
+счётчик входов, общий дневной PnL и метки сделок.
 Также начинает и продолжает прогон из JSON на временных ZIP со скрытым прогревом.
 Команда ниже запускается из корня проекта.
     .\.venv\Scripts\python.exe -m unittest tests.test_semafor_backtest -v
@@ -204,6 +204,47 @@ class SemaforBacktestTests(unittest.TestCase):
         window.buttons[0].click()
         self.assertTrue(window.summary.text().startswith(prefix))
 
+    def test_trade_triangles_track_groups_closes_and_rewind(self):
+        """Сверяет метки на цене сделки, группировку и удаление при двух шагах назад."""
+        from PyQt6.QtTest import QTest
+
+        window = self.open_window(sample_bars())
+        chart = window.chart
+        marks = chart.trade_markers
+        self.assertEqual(len(marks.points()), 0)
+        window.buttons[2].click()
+        window.buttons[2].click()
+        (buy,) = marks.points()
+        self.assertEqual((buy.symbol(), buy.brush().color().name()), ("t2", "#2563eb"))
+        self.assertEqual((buy.pos().x(), buy.pos().y()), (0, 100.1))
+        scene_point = chart.price.vb.mapViewToScene(buy.pos())
+        QTest.mouseMove(chart.viewport(), chart.mapFromScene(scene_point))
+        self.app.processEvents()
+        self.assertIn("Сделок 2", chart.price.vb.toolTip())
+
+        window.buttons[3].click()
+        opens = marks.points()
+        self.assertEqual([point.brush().color().name() for point in opens], ["#2563eb", "#800020"])
+        self.assertTrue(all(point.symbol() == "t2" and point.pos().y() == 100.1 for point in opens))
+        self.assertNotEqual(opens[0].pos().x(), opens[1].pos().x())
+        self.assertTrue(all(abs(point.pos().x()) < 0.5 for point in opens))
+
+        window.buttons[1].click()
+        window.table.cellWidget(0, 0).click()
+        (buy_exit,) = [point for point in marks.points() if point.symbol() == "t3"]
+        self.assertEqual((buy_exit.pos().x(), buy_exit.pos().y()), (1, 102.4))
+        self.assertIn("Сделок 1", buy_exit.data())
+        window.buttons[4].click()
+        exits = [point for point in marks.points() if point.symbol() == "t3"]
+        self.assertEqual([point.brush().color().name() for point in exits], ["#2563eb", "#800020"])
+        self.assertTrue(all(point.pos().y() == 102.4 and abs(point.pos().x() - 1) < 0.5 for point in exits))
+        self.assertIn("Сделок 2", exits[0].data())
+
+        window.buttons[0].click()
+        self.assertEqual([point.symbol() for point in marks.points()], ["t2", "t2"])
+        window.buttons[0].click()
+        self.assertEqual(len(marks.points()), 0)
+
     def test_cli_resumes_original_session_and_hidden_warmup(self):
         """Продолжает через main исходную сессию после появления новых архивов."""
         from PyQt6.QtCore import QTimer
@@ -262,7 +303,9 @@ class SemaforBacktestTests(unittest.TestCase):
                     if isinstance(window, BacktestWindow) and window.isVisible():
                         restored.append((window.session.cursor, window.session.finished,
                                          window.chart.points.ma_slow.tolist(),
-                                         [p.entry_time[:10] for p in window.session.positions]))
+                                         [p.entry_time[:10] for p in window.session.positions],
+                                         [(p.symbol(), p.pos().x(), p.pos().y())
+                                          for p in window.chart.trade_markers.points()]))
                         window.close()
                         break
             finally:
@@ -270,4 +313,4 @@ class SemaforBacktestTests(unittest.TestCase):
 
         QTimer.singleShot(0, inspect_resumed_window)
         self.assertEqual(main(["--resume", str(journal.with_suffix(".state.json"))]), 0)
-        self.assertEqual(restored, [(1, True, [103], [str(day)])])
+        self.assertEqual(restored, [(1, True, [103], [str(day)], [("t2", 0, 100)])])
