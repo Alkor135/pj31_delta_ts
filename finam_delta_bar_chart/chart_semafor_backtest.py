@@ -12,7 +12,7 @@ CSV сохраняет сделки и прежние поля журнала. �
     .\.venv\Scripts\python.exe .\finam_delta_bar_chart\chart_semafor_backtest.py --symbol RTS --date 2026-11-11
     .\.venv\Scripts\python.exe -m finam_delta_bar_chart.chart_semafor_backtest --symbol MIX --start 2026-11-11 --history-start 2026-11-10 --date 2026-11-11 --trades MIX_semafor.csv
     .\.venv\Scripts\python.exe -m finam_delta_bar_chart.chart_semafor_backtest --symbol MIX --start 2026-09-01 --history-start 2026-08-01 --trades .\finam_delta_bar_chart\backtests\MIX_semafor.csv
-    .\.venv\Scripts\python.exe -m finam_delta_bar_chart.chart_semafor_backtest --resume .\MIX_semafor.state.json
+    .\.venv\Scripts\python.exe -m finam_delta_bar_chart.chart_semafor_backtest --resume .\finam_delta_bar_chart\backtests\MIX_semafor.state.json
 """
 
 from contextlib import ExitStack
